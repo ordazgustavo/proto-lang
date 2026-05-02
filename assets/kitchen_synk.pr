@@ -1,0 +1,47 @@
+import std
+import std::Option
+
+struct Point(x: f32, y: f32)
+extend Point {
+  fn distance_squared(self) -> f64 {
+    self.x * self.x + self.y * self.y
+  }
+}
+
+enum Void{}
+enum Option {
+  some,
+  none,
+}
+
+fn add(a: usize, b: usize) -> usize {
+  a + b
+}
+
+fn sub(_ a: usize, _ b: usize) -> usize {
+  a - b
+}
+
+fn mul(x a: usize, y b: usize) -> usize {
+  a - b
+}
+
+fn main() {
+  let a = add(a: 1, b: 2)
+  var b = sub(1, 2)
+  a + b
+
+  let test = true
+  let cond = if test { 1 } else { 0 }
+
+  let point = Point(x: 3, y: 4)
+  let d = point.distance_squared()
+
+  let int = 123
+  let float = 123.5
+  let float = 0.5
+  let bool = false
+  let char = 'a'
+  let char = '5'
+  let str = "hello"
+}

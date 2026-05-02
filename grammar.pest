@@ -1,0 +1,86 @@
+WHITESPACE = _{ " " | "\t" | NEWLINE }
+KEYWORD    = @{ "const" | "else" | "fn" | "if" | "import" | "let" | "var" }
+
+ident = @{ !KEYWORD ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+program = _{ SOI ~ item* ~ EOI }
+
+// Module items
+item        = { import | const | function | struct | enum | extend }
+import      = { "import" ~ ident ~ ("::" ~ ident)* }
+const       = { "const" ~ ident ~ binding_type ~ "=" ~ expr }
+function    = { "fn" ~ ident ~ "(" ~ params? ~ ")" ~ return_type? ~ block }
+struct      = { "struct" ~ ident ~ "(" ~ params? ~ ")" }
+enum        = { "enum" ~ ident ~ "{" ~ enum_member? ~ "}" }
+enum_member = { ident ~ ("," ~ ident)* ~ ","? }
+extend      = { "extend" ~ ident ~ "{" ~ extend_body ~ "}" }
+extend_body = { method* }
+
+method        = { "fn" ~ ident ~ "(" ~ method_params? ~ ")" ~ return_type? ~ block }
+method_params = { method_param ~ ("," ~ param)* ~ ","? }
+method_param  = { "self" | param }
+
+type         =  { ident }
+return_type  =  { "->" ~ type }
+binding_type = _{ ":" ~ type }
+
+block = { "{" ~ stmt* ~ "}" }
+
+stmt          = { assignment | expr }
+assignment    = { ("let" | "var")? ~ assign_target ~ binding_type? ~ "=" ~ expr }
+assign_target = { field_access | ident }
+
+// Params
+params          = { param ~ ("," ~ param)* ~ ","? }
+param           = { named_param | labeled_param | supressed_param }
+named_param     = { ident ~ binding_type }
+labeled_param   = { ident ~ ident ~ binding_type }
+supressed_param = { "_" ~ ident ~ binding_type }
+
+// Expressions
+expr = { conditional | comparison }
+
+// if (cond) { ... } else { ... }
+conditional = { "if" ~ expr ~ block ~ "else" ~ block }
+
+// Comparison operators
+comparison = { additive ~ (comp_op ~ additive)* }
+comp_op    = { "<=" | ">=" | "<" | ">" | "==" | "!=" }
+
+// Addition/Subtraction
+additive = { multiplicative ~ (add_op ~ multiplicative)* }
+add_op   = { "+" | "-" }
+
+// Multiplication/Division
+multiplicative = { unary ~ (mul_op ~ unary)* }
+mul_op         = { "*" | "/" | "%" }
+
+// Unary operators
+unary    = { unary_op ~ unary | postfix }
+unary_op = { "-" | "!" }
+
+// Postfix: field access and method calls
+postfix         = { primary ~ postfix_op* }
+postfix_op      = { method_call | field_access_op }
+method_call     = { "." ~ ident ~ "(" ~ args? ~ ")" }
+field_access_op = { "." ~ ident }
+
+// For assignment target parsing
+field_access = { (self_keyword | ident) ~ ("." ~ ident)+ }
+self_keyword = { "self" }
+
+// Primary expressions
+primary = _{ function_call | literal | self_keyword | ident | "(" ~ expr ~ ")" }
+
+// Function call (standalone, not method): name(args)
+function_call = { ident ~ "(" ~ args? ~ ")" }
+args          = { arg ~ ("," ~ arg)* }
+arg           = { (ident ~ ":")? ~ expr }
+
+// Literals
+literal =  { bool | float | integer | char | str }
+float   = @{ ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*) ~ "." ~ ASCII_DIGIT+ }
+integer = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
+bool    = @{ "true" | "false" }
+char    = @{ "'" ~ ASCII_ALPHANUMERIC ~ "'" }
+str     = @{ "\"" ~ ASCII_ALPHANUMERIC+ ~ "\"" }
