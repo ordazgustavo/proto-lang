@@ -1,5 +1,5 @@
 WHITESPACE = _{ " " | "\t" | NEWLINE }
-KEYWORD    = @{ "const" | "else" | "fn" | "if" | "import" | "let" | "var" }
+KEYWORD    = @{ "const" | "else" | "enum" | "extend" | "fn" | "for" | "if" | "import" | "in" | "let" | "self" | "struct" | "true" | "false" | "var" }
 
 ident = @{ !KEYWORD ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
@@ -26,22 +26,25 @@ binding_type = _{ ":" ~ type }
 
 block = { "{" ~ stmt* ~ "}" }
 
-stmt          = { assignment | expr }
+stmt = { if_stmt | for_in_stmt | assignment | expr }
+// if used as a statement (else optional)
+if_stmt       = { "if" ~ expr ~ block ~ ("else" ~ (if_stmt | block))? }
+for_in_stmt   = { "for" ~ ident ~ "in" ~ expr ~ block }
 assignment    = { ("let" | "var")? ~ assign_target ~ binding_type? ~ "=" ~ expr }
 assign_target = { field_access | ident }
 
 // Params
-params          = { param ~ ("," ~ param)* ~ ","? }
-param           = { named_param | labeled_param | supressed_param }
-named_param     = { ident ~ binding_type }
-labeled_param   = { ident ~ ident ~ binding_type }
-supressed_param = { "_" ~ ident ~ binding_type }
+params           = { param ~ ("," ~ param)* ~ ","? }
+param            = { named_param | labeled_param | suppressed_param }
+named_param      = { ident ~ binding_type }
+labeled_param    = { ident ~ ident ~ binding_type }
+suppressed_param = { "_" ~ ident ~ binding_type }
 
 // Expressions
-expr = { conditional | comparison }
+expr = { if_expr | comparison }
 
-// if (cond) { ... } else { ... }
-conditional = { "if" ~ expr ~ block ~ "else" ~ block }
+// if used as an expression (requires else)
+if_expr = { "if" ~ expr ~ block ~ "else" ~ (if_expr | block) }
 
 // Comparison operators
 comparison = { additive ~ (comp_op ~ additive)* }
@@ -82,5 +85,6 @@ literal =  { bool | float | integer | char | str }
 float   = @{ ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*) ~ "." ~ ASCII_DIGIT+ }
 integer = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
 bool    = @{ "true" | "false" }
-char    = @{ "'" ~ ASCII_ALPHANUMERIC ~ "'" }
-str     = @{ "\"" ~ ASCII_ALPHANUMERIC+ ~ "\"" }
+char    = @{ "'" ~ (escape | !("'" | "\\" | NEWLINE) ~ ANY) ~ "'" }
+str     = @{ "\"" ~ (escape | !("\"" | "\\" | NEWLINE) ~ ANY)* ~ "\"" }
+escape  = _{ "\\" ~ ("n" | "r" | "t" | "\\" | "\"" | "'") }
