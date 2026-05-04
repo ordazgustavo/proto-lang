@@ -13,4 +13,5 @@ name = "proto"
 path = "src/main.rs"
 
 [dependencies]
-lexer = { path = "crates/lexer" }
+ast = { path = "crates/ast" }
+parser = { path = "crates/parser" }

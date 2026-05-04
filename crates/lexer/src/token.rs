@@ -1,8 +1,4 @@
-#[derive(Debug)]
-pub struct Span {
-    pub start: usize,
-    pub end: usize,
-}
+use ast::span::Span;
 
 #[derive(Debug)]
 pub struct Token {
@@ -10,7 +6,7 @@ pub struct Token {
     pub span: Span,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LexErrorKind {
     UnknownToken,
     UnterminatedString,
@@ -20,7 +16,7 @@ pub enum LexErrorKind {
     MalformedFloat,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
     Eof,
     Error(LexErrorKind),

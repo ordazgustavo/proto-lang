@@ -37,13 +37,22 @@ fn main() {
   let point = Point(x: 3, y: 4)
   let d = point.distance_squared()
 
-  let int = 123
+  let i = 123
   let float = 123.5
   let float = 0.5
   let bool = false
   let char = 'a'
   let char = '5'
   let str = "hello"
+  let arr = [1, 2, 3]
+
+  if i > 0 {
+    print("Is greater than 0")
+  } else if i < 0 {
+    print("Is lower than 0")
+  } else if i == 0 {
+    print("Is equal to 0")
+  }
 
   test::<T>()
   point.test()

@@ -1,21 +1,19 @@
-use crate::token::{LexErrorKind, Span, Token, TokenKind};
+use ast::span::{FileId, Span};
+
+use crate::token::{LexErrorKind, Token, TokenKind};
 
 pub struct Lexer<'a> {
     bytes: &'a [u8],
-    _file: u16,
+    file: FileId,
     pos: usize,
     emitted_eof: bool,
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(source: &'a str) -> Self {
-        Self::with_file(source, 0)
-    }
-
-    pub fn with_file(source: &'a str, file: u16) -> Self {
+    pub fn new(source: &'a str, file: FileId) -> Self {
         Self {
             bytes: source.as_bytes(),
-            _file: file,
+            file,
             pos: 0,
             emitted_eof: false,
         }
@@ -107,6 +105,7 @@ impl<'a> Lexer<'a> {
             span: Span {
                 start,
                 end: self.pos,
+                file: self.file,
             },
         }
     }
@@ -138,6 +137,7 @@ impl<'a> Lexer<'a> {
                     span: Span {
                         start,
                         end: dot_pos + 1,
+                        file: self.file,
                     },
                 };
             }
@@ -147,6 +147,7 @@ impl<'a> Lexer<'a> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             };
         }
@@ -156,6 +157,7 @@ impl<'a> Lexer<'a> {
             span: Span {
                 start,
                 end: self.pos,
+                file: self.file,
             },
         }
     }
@@ -176,6 +178,7 @@ impl<'a> Lexer<'a> {
                         span: Span {
                             start,
                             end: self.pos,
+                            file: self.file,
                         },
                     };
                 }
@@ -186,6 +189,7 @@ impl<'a> Lexer<'a> {
                             span: Span {
                                 start,
                                 end: self.pos,
+                                file: self.file,
                             },
                         };
                     };
@@ -199,6 +203,7 @@ impl<'a> Lexer<'a> {
                         span: Span {
                             start,
                             end: self.pos,
+                            file: self.file,
                         },
                     };
                 }
@@ -211,6 +216,7 @@ impl<'a> Lexer<'a> {
             span: Span {
                 start,
                 end: self.pos,
+                file: self.file,
             },
         }
     }
@@ -222,6 +228,7 @@ impl<'a> Lexer<'a> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             };
         };
@@ -234,6 +241,7 @@ impl<'a> Lexer<'a> {
                         span: Span {
                             start,
                             end: self.pos,
+                            file: self.file,
                         },
                     };
                 };
@@ -243,6 +251,7 @@ impl<'a> Lexer<'a> {
                         span: Span {
                             start,
                             end: self.pos,
+                            file: self.file,
                         },
                     };
                 }
@@ -253,6 +262,7 @@ impl<'a> Lexer<'a> {
                     span: Span {
                         start,
                         end: self.pos,
+                        file: self.file,
                     },
                 };
             }
@@ -265,6 +275,7 @@ impl<'a> Lexer<'a> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             }
         } else {
@@ -273,6 +284,7 @@ impl<'a> Lexer<'a> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             }
         }
@@ -294,7 +306,11 @@ impl Iterator for Lexer<'_> {
             self.emitted_eof = true;
             return Some(Token {
                 kind: TokenKind::Eof,
-                span: Span { start, end: start },
+                span: Span {
+                    start,
+                    end: start,
+                    file: self.file,
+                },
             });
         };
 
@@ -315,6 +331,7 @@ impl Iterator for Lexer<'_> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             },
             b')' => Token {
@@ -322,6 +339,7 @@ impl Iterator for Lexer<'_> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             },
             b'{' => Token {
@@ -329,6 +347,7 @@ impl Iterator for Lexer<'_> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             },
             b'}' => Token {
@@ -336,6 +355,7 @@ impl Iterator for Lexer<'_> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             },
             b'[' => Token {
@@ -343,6 +363,7 @@ impl Iterator for Lexer<'_> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             },
             b']' => Token {
@@ -350,6 +371,7 @@ impl Iterator for Lexer<'_> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             },
             b',' => Token {
@@ -357,6 +379,7 @@ impl Iterator for Lexer<'_> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             },
             b':' => {
@@ -370,6 +393,7 @@ impl Iterator for Lexer<'_> {
                     span: Span {
                         start,
                         end: self.pos,
+                        file: self.file,
                     },
                 }
             }
@@ -378,6 +402,7 @@ impl Iterator for Lexer<'_> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             },
             b'+' => Token {
@@ -385,6 +410,7 @@ impl Iterator for Lexer<'_> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             },
             b'-' => {
@@ -398,6 +424,7 @@ impl Iterator for Lexer<'_> {
                     span: Span {
                         start,
                         end: self.pos,
+                        file: self.file,
                     },
                 }
             }
@@ -406,6 +433,7 @@ impl Iterator for Lexer<'_> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             },
             b'/' => Token {
@@ -413,6 +441,7 @@ impl Iterator for Lexer<'_> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             },
             b'%' => Token {
@@ -420,6 +449,7 @@ impl Iterator for Lexer<'_> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             },
             b'=' => {
@@ -433,6 +463,7 @@ impl Iterator for Lexer<'_> {
                     span: Span {
                         start,
                         end: self.pos,
+                        file: self.file,
                     },
                 }
             }
@@ -447,6 +478,7 @@ impl Iterator for Lexer<'_> {
                     span: Span {
                         start,
                         end: self.pos,
+                        file: self.file,
                     },
                 }
             }
@@ -461,6 +493,7 @@ impl Iterator for Lexer<'_> {
                     span: Span {
                         start,
                         end: self.pos,
+                        file: self.file,
                     },
                 }
             }
@@ -475,6 +508,7 @@ impl Iterator for Lexer<'_> {
                     span: Span {
                         start,
                         end: self.pos,
+                        file: self.file,
                     },
                 }
             }
@@ -483,6 +517,7 @@ impl Iterator for Lexer<'_> {
                 span: Span {
                     start,
                     end: self.pos,
+                    file: self.file,
                 },
             },
         };
@@ -493,10 +528,14 @@ impl Iterator for Lexer<'_> {
 
 #[cfg(test)]
 mod tests {
+    use ast::span::FileId;
+
     use super::{LexErrorKind, Lexer, TokenKind};
 
     fn kinds(source: &str) -> Vec<TokenKind> {
-        Lexer::new(source).map(|token| token.kind).collect()
+        Lexer::new(source, FileId(0))
+            .map(|token| token.kind)
+            .collect()
     }
 
     #[test]
@@ -550,7 +589,7 @@ mod tests {
     #[test]
     fn lexes_kitchen_synk_prefix() {
         let sample = include_str!("../../../assets/kitchen_synk.pr");
-        let first = Lexer::new(sample)
+        let first = Lexer::new(sample, FileId(0))
             .take(7)
             .map(|token| token.kind)
             .collect::<Vec<_>>();
@@ -571,7 +610,7 @@ mod tests {
 
     #[test]
     fn tracks_spans() {
-        let tokens = Lexer::new("let x").take(2).collect::<Vec<_>>();
+        let tokens = Lexer::new("let x", FileId(0)).take(2).collect::<Vec<_>>();
         assert_eq!(tokens[0].span.start, 0);
         assert_eq!(tokens[0].span.end, 3);
         assert_eq!(tokens[1].span.start, 4);
