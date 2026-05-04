@@ -1,5 +1,21 @@
 WHITESPACE = _{ " " | "\t" | NEWLINE }
-KEYWORD    = @{ "const" | "else" | "enum" | "extend" | "fn" | "for" | "if" | "import" | "in" | "let" | "self" | "struct" | "true" | "false" | "var" }
+KEYWORD    = @{
+    "const"
+  | "else"
+  | "enum"
+  | "extend"
+  | "fn"
+  | "for"
+  | "if"
+  | "import"
+  | "in"
+  | "let"
+  | "self"
+  | "struct"
+  | "true"
+  | "false"
+  | "var"
+}
 
 ident = @{ !KEYWORD ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
@@ -9,20 +25,23 @@ program = _{ SOI ~ item* ~ EOI }
 item        = { import | const | function | struct | enum | extend }
 import      = { "import" ~ ident ~ ("::" ~ ident)* }
 const       = { "const" ~ ident ~ binding_type ~ "=" ~ expr }
-function    = { "fn" ~ ident ~ "(" ~ params? ~ ")" ~ return_type? ~ block }
-struct      = { "struct" ~ ident ~ "(" ~ params? ~ ")" }
-enum        = { "enum" ~ ident ~ "{" ~ enum_member? ~ "}" }
+function    = { "fn" ~ ident ~ generic_params? ~ "(" ~ params? ~ ")" ~ return_type? ~ block }
+struct      = { "struct" ~ ident ~ generic_params? ~ "(" ~ params? ~ ")" }
+enum        = { "enum" ~ ident ~ generic_params? ~ "{" ~ enum_member? ~ "}" }
 enum_member = { ident ~ ("," ~ ident)* ~ ","? }
-extend      = { "extend" ~ ident ~ "{" ~ extend_body ~ "}" }
+extend      = { "extend" ~ ident ~ generic_params? ~ "{" ~ extend_body ~ "}" }
 extend_body = { method* }
 
-method        = { "fn" ~ ident ~ "(" ~ method_params? ~ ")" ~ return_type? ~ block }
+method        = { "fn" ~ ident ~ generic_params? ~ "(" ~ method_params? ~ ")" ~ return_type? ~ block }
 method_params = { method_param ~ ("," ~ param)* ~ ","? }
 method_param  = { "self" | param }
 
-type         =  { ident }
-return_type  =  { "->" ~ type }
-binding_type = _{ ":" ~ type }
+type           =  { ident ~ generic_args? }
+generic_params =  { "<" ~ generic_param ~ ("," ~ generic_param)* ~ ">" }
+generic_param  =  { ident }
+generic_args   =  { "<" ~ type ~ ("," ~ type)* ~ ">" }
+return_type    =  { "->" ~ type }
+binding_type   = _{ ":" ~ type }
 
 block = { "{" ~ stmt* ~ "}" }
 
@@ -65,7 +84,7 @@ unary_op = { "-" | "!" }
 // Postfix: field access and method calls
 postfix         = { primary ~ postfix_op* }
 postfix_op      = { method_call | field_access_op }
-method_call     = { "." ~ ident ~ "(" ~ args? ~ ")" }
+method_call     = { "." ~ ident ~ turbofish? ~ "(" ~ args? ~ ")" }
 field_access_op = { "." ~ ident }
 
 // For assignment target parsing
@@ -76,7 +95,8 @@ self_keyword = { "self" }
 primary = _{ function_call | literal | self_keyword | ident | "(" ~ expr ~ ")" }
 
 // Function call (standalone, not method): name(args)
-function_call = { ident ~ "(" ~ args? ~ ")" }
+function_call = { ident ~ turbofish? ~ "(" ~ args? ~ ")" }
+turbofish     = { "::" ~ generic_args }
 args          = { arg ~ ("," ~ arg)* }
 arg           = { (ident ~ ":")? ~ expr }
 

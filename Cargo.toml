@@ -1,3 +1,16 @@
+[package]
+name = "proto-interpreter"
+edition = "2024"
+description = "Proto repl and command line interface"
+default-run = "proto"
+
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+
+[[bin]]
+name = "proto"
+path = "src/main.rs"
+
+[dependencies]
+lexer = { path = "crates/lexer" }
