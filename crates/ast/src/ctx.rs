@@ -1,8 +1,8 @@
 use crate::{
-    expr::ExprArena,
-    interner::Interner,
-    item::ItemArena,
-    ty::TypeArena,
+    expr::{Expr, ExprArena, ExprId},
+    interner::{Interner, StrId},
+    item::{Item, ItemArena, ItemId},
+    ty::{Type, TypeArena, TypeId},
 };
 
 pub struct AstCtx {
@@ -24,5 +24,37 @@ impl AstCtx {
             exprs: ExprArena::new(),
             strings: Interner::with_capacity(256),
         }
+    }
+
+    pub fn alloc_item(&mut self, item: Item) -> ItemId {
+        self.items.alloc(item)
+    }
+
+    pub fn get_item(&self, id: ItemId) -> &Item {
+        self.items.get(id)
+    }
+
+    pub fn alloc_type(&mut self, ty: Type) -> TypeId {
+        self.types.alloc(ty)
+    }
+
+    pub fn get_type(&self, id: TypeId) -> &Type {
+        self.types.get(id)
+    }
+
+    pub fn alloc_expr(&mut self, expr: Expr) -> ExprId {
+        self.exprs.alloc(expr)
+    }
+
+    pub fn get_expr(&self, id: ExprId) -> &Expr {
+        self.exprs.get(id)
+    }
+
+    pub fn intern_str(&mut self, value: &str) -> StrId {
+        self.strings.intern(value)
+    }
+
+    pub fn get_str(&self, id: StrId) -> &str {
+        self.strings.lookup(id)
     }
 }

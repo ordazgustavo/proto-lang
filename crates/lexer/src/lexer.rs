@@ -2,6 +2,7 @@ use ast::span::{FileId, Span};
 
 use crate::token::{LexErrorKind, Token, TokenKind};
 
+#[derive(Clone)]
 pub struct Lexer<'a> {
     bytes: &'a [u8],
     file: FileId,

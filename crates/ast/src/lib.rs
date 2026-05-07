@@ -5,8 +5,8 @@ pub mod debug_ast;
 pub mod expr;
 mod interner;
 pub mod item;
-pub mod ty;
 pub mod span;
+pub mod ty;
 pub mod visit;
 
 pub use debug_ast::format_program_ast;

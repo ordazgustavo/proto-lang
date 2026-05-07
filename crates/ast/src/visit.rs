@@ -20,7 +20,7 @@ pub fn walk_program<V: AstVisitor + ?Sized>(visitor: &mut V, items: &[ItemId], c
 }
 
 pub fn walk_item<V: AstVisitor + ?Sized>(visitor: &mut V, item_id: ItemId, ctx: &AstCtx) {
-    let item = ctx.items.get(item_id);
+    let item = ctx.get_item(item_id);
     match &item.kind {
         ItemKind::Import(import) => visitor.visit_import(item_id, import, ctx),
         ItemKind::Const(const_def) => visitor.visit_const(item_id, const_def, ctx),

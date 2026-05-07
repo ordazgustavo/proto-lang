@@ -3,7 +3,6 @@ use std::iter::Peekable;
 use ast::{
     common::{Ident, ModPath},
     ctx::AstCtx,
-    expr::{Expr, ExprId, ExprKind, Lit, LitKind},
     item::{ConstDef, ImportDef, Item, ItemId, ItemKind},
     span::{FileId, Span},
     ty::{Type, TypeId, TypeKind},
@@ -16,9 +15,9 @@ use lexer::{
 use crate::error::{PResult, ParseError};
 
 pub struct Parser<'a> {
-    ctx: &'a mut AstCtx,
-    source: &'a str,
-    lexer: Peekable<Lexer<'a>>,
+    pub(crate) ctx: &'a mut AstCtx,
+    pub(crate) source: &'a str,
+    pub(crate) lexer: Peekable<Lexer<'a>>,
 }
 
 impl<'a> Parser<'a> {
@@ -50,7 +49,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect(&mut self, kind: TokenKind, span: Span) -> PResult<Token> {
+    pub(crate) fn expect(&mut self, kind: TokenKind, span: Span) -> PResult<Token> {
         let token = self
             .lexer
             .next()
@@ -77,7 +76,7 @@ impl<'a> Parser<'a> {
             kind: ItemKind::Import(def),
             span: item_span,
         };
-        Ok(self.ctx.items.alloc(item))
+        Ok(self.ctx.alloc_item(item))
     }
 
     fn parse_path(&mut self, span: Span) -> PResult<ModPath> {
@@ -86,7 +85,7 @@ impl<'a> Parser<'a> {
 
         loop {
             let first = self.expect(TokenKind::Ident, expected_ident_span)?;
-            let name = self.ctx.strings.intern(&self.source[first.span.range()]);
+            let name = self.ctx.intern_str(&self.source[first.span.range()]);
             paths.push(Ident {
                 name,
                 span: first.span,
@@ -104,10 +103,7 @@ impl<'a> Parser<'a> {
 
     fn parse_const_def(&mut self, const_span: Span) -> PResult<ItemId> {
         let name_tok = self.expect(TokenKind::Ident, const_span)?;
-        let name = self
-            .ctx
-            .strings
-            .intern(&self.source[name_tok.span.range()]);
+        let name = self.ctx.intern_str(&self.source[name_tok.span.range()]);
         let name_ident = Ident {
             name,
             span: name_tok.span,
@@ -115,10 +111,17 @@ impl<'a> Parser<'a> {
 
         let colon_tok = self.expect(TokenKind::Colon, name_tok.span)?;
         let ty_id = self.parse_type(colon_tok.span)?;
-        let ty_span = self.ctx.types.get(ty_id).span;
+        let ty_span = self.ctx.get_type(ty_id).span;
         let eq_tok = self.expect(TokenKind::Assign, ty_span)?;
-        let expr_id = self.parse_literal_expr(eq_tok.span)?;
-        let expr_span = self.ctx.exprs.get(expr_id).span;
+        if self
+            .lexer
+            .peek()
+            .is_some_and(|token| token.kind == TokenKind::Eof)
+        {
+            return Err(ParseError::unexpected_eof(None, eq_tok.span));
+        }
+        let expr_id = self.parse_expr()?;
+        let expr_span = self.ctx.get_expr(expr_id).span;
         let item_span = const_span.merge(expr_span);
 
         let def = ConstDef {
@@ -130,10 +133,10 @@ impl<'a> Parser<'a> {
             kind: ItemKind::Const(def),
             span: item_span,
         };
-        Ok(self.ctx.items.alloc(item))
+        Ok(self.ctx.alloc_item(item))
     }
 
-    fn parse_type(&mut self, prev_span: Span) -> PResult<TypeId> {
+    pub(crate) fn parse_type(&mut self, prev_span: Span) -> PResult<TypeId> {
         let path = self.parse_path(prev_span)?;
         let span = match (path.0.first(), path.0.last()) {
             (Some(first), Some(last)) => first.span.merge(last.span),
@@ -143,40 +146,7 @@ impl<'a> Parser<'a> {
             kind: TypeKind::Path(path),
             span,
         };
-        Ok(self.ctx.types.alloc(ty))
-    }
-
-    fn parse_literal_expr(&mut self, prev_span: Span) -> PResult<ExprId> {
-        let token = self
-            .lexer
-            .next()
-            .ok_or_else(|| ParseError::unexpected_eof(None, prev_span))?;
-        if token.kind == TokenKind::Eof {
-            return Err(ParseError::unexpected_eof(None, prev_span));
-        }
-
-        let lit_kind = match token.kind {
-            TokenKind::Integer => LitKind::Int,
-            TokenKind::Float => LitKind::Float,
-            TokenKind::KwTrue => LitKind::Bool(true),
-            TokenKind::KwFalse => LitKind::Bool(false),
-            TokenKind::Char => LitKind::Char,
-            TokenKind::Str => LitKind::Str,
-            _ => {
-                return Err(ParseError::expected_expr(token.kind, token.span));
-            }
-        };
-
-        let span = token.span;
-        let lit = Lit {
-            kind: lit_kind,
-            span,
-        };
-        let expr = Expr {
-            kind: ExprKind::Literal(lit),
-            span,
-        };
-        Ok(self.ctx.exprs.alloc(expr))
+        Ok(self.ctx.alloc_type(ty))
     }
 }
 
@@ -184,7 +154,7 @@ impl<'a> Parser<'a> {
 mod tests {
     use ast::{
         ctx::AstCtx,
-        expr::{ExprKind, LitKind},
+        expr::{BinaryOp, ExprKind, LitKind},
         item::ItemKind,
         span::FileId,
         ty::TypeKind,
@@ -213,7 +183,7 @@ mod tests {
         let items = result.expect("parser should accept a simple import");
         assert_eq!(items.len(), 1);
 
-        let item = ctx.items.get(items[0]);
+        let item = ctx.get_item(items[0]);
         assert_eq!(item.span.start, 0);
         assert_eq!(item.span.end, source.len());
 
@@ -221,7 +191,7 @@ mod tests {
             panic!("expected import");
         };
         assert_eq!(def.path.0.len(), 1);
-        assert_eq!(ctx.strings.lookup(def.path.0[0].name), "std");
+        assert_eq!(ctx.get_str(def.path.0[0].name), "std");
         assert_eq!(def.path.0[0].span.start, 7);
         assert_eq!(def.path.0[0].span.end, 10);
     }
@@ -233,7 +203,7 @@ mod tests {
         let items = result.expect("parser should accept multi-segment imports");
         assert_eq!(items.len(), 1);
 
-        let item = ctx.items.get(items[0]);
+        let item = ctx.get_item(items[0]);
         assert_eq!(item.span.start, 0);
         assert_eq!(item.span.end, source.len());
 
@@ -241,8 +211,8 @@ mod tests {
             panic!("expected import");
         };
         assert_eq!(def.path.0.len(), 2);
-        assert_eq!(ctx.strings.lookup(def.path.0[0].name), "std");
-        assert_eq!(ctx.strings.lookup(def.path.0[1].name), "Option");
+        assert_eq!(ctx.get_str(def.path.0[0].name), "std");
+        assert_eq!(ctx.get_str(def.path.0[1].name), "Option");
         assert_eq!(def.path.0[0].span.start, 7);
         assert_eq!(def.path.0[0].span.end, 10);
         assert_eq!(def.path.0[1].span.start, 12);
@@ -300,20 +270,22 @@ mod tests {
         let items = result.expect("parser should accept const float");
         assert_eq!(items.len(), 1);
 
-        let item = ctx.items.get(items[0]);
+        let item = ctx.get_item(items[0]);
         assert_eq!(item.span.start, 0);
         assert_eq!(item.span.end, source.len());
 
         let ItemKind::Const(def) = &item.kind else {
             panic!("expected const");
         };
-        assert_eq!(ctx.strings.lookup(def.name.name), "PI");
-        let ty = ctx.types.get(def.ty);
+        assert_eq!(ctx.get_str(def.name.name), "PI");
+        let ty = ctx.get_type(def.ty);
         let TypeKind::Path(path) = &ty.kind;
         assert_eq!(path.0.len(), 1);
-        assert_eq!(ctx.strings.lookup(path.0[0].name), "f64");
-        let expr = ctx.exprs.get(def.value);
-        let ExprKind::Literal(lit) = &expr.kind;
+        assert_eq!(ctx.get_str(path.0[0].name), "f64");
+        let expr = ctx.get_expr(def.value);
+        let ExprKind::Literal(lit) = &expr.kind else {
+            panic!("expected literal");
+        };
         assert!(matches!(lit.kind, LitKind::Float));
         assert_eq!(&source[lit.span.range()], "3.14");
     }
@@ -325,17 +297,19 @@ mod tests {
         let items = result.expect("parser should accept const str");
         assert_eq!(items.len(), 1);
 
-        let item = ctx.items.get(items[0]);
+        let item = ctx.get_item(items[0]);
         let ItemKind::Const(def) = &item.kind else {
             panic!("expected const");
         };
-        assert_eq!(ctx.strings.lookup(def.name.name), "NAME");
-        let ty = ctx.types.get(def.ty);
+        assert_eq!(ctx.get_str(def.name.name), "NAME");
+        let ty = ctx.get_type(def.ty);
         let TypeKind::Path(path) = &ty.kind;
         assert_eq!(path.0.len(), 1);
-        assert_eq!(ctx.strings.lookup(path.0[0].name), "str");
-        let expr = ctx.exprs.get(def.value);
-        let ExprKind::Literal(lit) = &expr.kind;
+        assert_eq!(ctx.get_str(path.0[0].name), "str");
+        let expr = ctx.get_expr(def.value);
+        let ExprKind::Literal(lit) = &expr.kind else {
+            panic!("expected literal");
+        };
         assert!(matches!(lit.kind, LitKind::Str));
         let quote = source.find('"').expect("opening quote");
         assert_eq!(lit.span.start, quote);
@@ -349,17 +323,19 @@ mod tests {
         let items = result.expect("parser should accept const bool");
         assert_eq!(items.len(), 1);
 
-        let item = ctx.items.get(items[0]);
+        let item = ctx.get_item(items[0]);
         let ItemKind::Const(def) = &item.kind else {
             panic!("expected const");
         };
-        assert_eq!(ctx.strings.lookup(def.name.name), "FLAG");
-        let ty = ctx.types.get(def.ty);
+        assert_eq!(ctx.get_str(def.name.name), "FLAG");
+        let ty = ctx.get_type(def.ty);
         let TypeKind::Path(path) = &ty.kind;
         assert_eq!(path.0.len(), 1);
-        assert_eq!(ctx.strings.lookup(path.0[0].name), "bool");
-        let expr = ctx.exprs.get(def.value);
-        let ExprKind::Literal(lit) = &expr.kind;
+        assert_eq!(ctx.get_str(path.0[0].name), "bool");
+        let expr = ctx.get_expr(def.value);
+        let ExprKind::Literal(lit) = &expr.kind else {
+            panic!("expected literal");
+        };
         assert_eq!(lit.kind, LitKind::Bool(true));
     }
 
@@ -370,24 +346,73 @@ mod tests {
         let items = result.expect("mixed program");
         assert_eq!(items.len(), 3);
 
-        let ItemKind::Const(a) = &ctx.items.get(items[0]).kind else {
+        let ItemKind::Const(a) = &ctx.get_item(items[0]).kind else {
             panic!("expected const A");
         };
-        assert_eq!(ctx.strings.lookup(a.name.name), "A");
+        assert_eq!(ctx.get_str(a.name.name), "A");
 
-        let ItemKind::Import(imp) = &ctx.items.get(items[1]).kind else {
+        let ItemKind::Import(imp) = &ctx.get_item(items[1]).kind else {
             panic!("expected import");
         };
         assert_eq!(imp.path.0.len(), 1);
-        assert_eq!(ctx.strings.lookup(imp.path.0[0].name), "std");
+        assert_eq!(ctx.get_str(imp.path.0[0].name), "std");
 
-        let ItemKind::Const(b) = &ctx.items.get(items[2]).kind else {
+        let ItemKind::Const(b) = &ctx.get_item(items[2]).kind else {
             panic!("expected const B");
         };
-        assert_eq!(ctx.strings.lookup(b.name.name), "B");
-        let expr = ctx.exprs.get(b.value);
-        let ExprKind::Literal(lit) = &expr.kind;
+        assert_eq!(ctx.get_str(b.name.name), "B");
+        let expr = ctx.get_expr(b.value);
+        let ExprKind::Literal(lit) = &expr.kind else {
+            panic!("expected literal");
+        };
         assert!(matches!(lit.kind, LitKind::Str));
+    }
+
+    #[test]
+    fn parses_expr_precedence() {
+        let source = "const X: i32 = 1 + 2 * 3";
+        let (ctx, result) = parse(source);
+        let items = result.expect("parser should accept binary expr");
+        let ItemKind::Const(def) = &ctx.get_item(items[0]).kind else {
+            panic!("expected const");
+        };
+
+        let ExprKind::Binary(add) = &ctx.get_expr(def.value).kind else {
+            panic!("expected add");
+        };
+        assert_eq!(add.op, BinaryOp::Add);
+        let ExprKind::Literal(lhs) = &ctx.get_expr(add.lhs).kind else {
+            panic!("expected lhs literal");
+        };
+        assert!(matches!(lhs.kind, LitKind::Int));
+        let ExprKind::Binary(mul) = &ctx.get_expr(add.rhs).kind else {
+            panic!("expected rhs mul");
+        };
+        assert_eq!(mul.op, BinaryOp::Mul);
+    }
+
+    #[test]
+    fn parses_unary_field_and_call() {
+        let source = "const X: bool = !foo.bar::<T>(a: 1, 2)";
+        let (ctx, result) = parse(source);
+        let items = result.expect("parser should accept postfix expr");
+        let ItemKind::Const(def) = &ctx.get_item(items[0]).kind else {
+            panic!("expected const");
+        };
+
+        let ExprKind::Unary(unary) = &ctx.get_expr(def.value).kind else {
+            panic!("expected unary");
+        };
+        let ExprKind::Call(call) = &ctx.get_expr(unary.expr).kind else {
+            panic!("expected call");
+        };
+        assert_eq!(call.generic_args.len(), 1);
+        assert_eq!(call.args.len(), 2);
+        assert!(call.args[0].label.is_some());
+        let ExprKind::Field(field) = &ctx.get_expr(call.callee).kind else {
+            panic!("expected method field");
+        };
+        assert_eq!(ctx.get_str(field.field.name), "bar");
     }
 
     #[test]
@@ -497,15 +522,15 @@ mod tests {
         let items = result.expect("multi-segment type path");
         assert_eq!(items.len(), 1);
 
-        let item = ctx.items.get(items[0]);
+        let item = ctx.get_item(items[0]);
         let ItemKind::Const(def) = &item.kind else {
             panic!("expected const");
         };
-        let ty = ctx.types.get(def.ty);
+        let ty = ctx.get_type(def.ty);
         let TypeKind::Path(path) = &ty.kind;
         assert_eq!(path.0.len(), 2);
-        assert_eq!(ctx.strings.lookup(path.0[0].name), "std");
-        assert_eq!(ctx.strings.lookup(path.0[1].name), "Option");
+        assert_eq!(ctx.get_str(path.0[0].name), "std");
+        assert_eq!(ctx.get_str(path.0[1].name), "Option");
         let type_snippet = "std::Option";
         let start = source.find(type_snippet).expect("type snippet");
         assert_eq!(ty.span.start, start);
