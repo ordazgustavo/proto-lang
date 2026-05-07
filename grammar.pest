@@ -36,7 +36,7 @@ method        = { "fn" ~ ident ~ generic_params? ~ "(" ~ method_params? ~ ")" ~ 
 method_params = { method_param ~ ("," ~ param)* ~ ","? }
 method_param  = { "self" | param }
 
-type           =  { ident ~ generic_args? }
+type           =  { ident ~ ("::" ~ ident)* ~ generic_args? }
 generic_params =  { "<" ~ generic_param ~ ("," ~ generic_param)* ~ ">" }
 generic_param  =  { ident }
 generic_args   =  { "<" ~ type ~ ("," ~ type)* ~ ">" }

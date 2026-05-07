@@ -1,6 +1,6 @@
 use crate::{
     ctx::AstCtx,
-    item::{ImportDef, ItemId, ItemKind},
+    item::{ConstDef, ImportDef, ItemId, ItemKind},
 };
 
 pub trait AstVisitor {
@@ -9,6 +9,8 @@ pub trait AstVisitor {
     }
 
     fn visit_import(&mut self, _item_id: ItemId, _import: &ImportDef, _ctx: &AstCtx) {}
+
+    fn visit_const(&mut self, _item_id: ItemId, _const_def: &ConstDef, _ctx: &AstCtx) {}
 }
 
 pub fn walk_program<V: AstVisitor + ?Sized>(visitor: &mut V, items: &[ItemId], ctx: &AstCtx) {
@@ -21,5 +23,6 @@ pub fn walk_item<V: AstVisitor + ?Sized>(visitor: &mut V, item_id: ItemId, ctx: 
     let item = ctx.items.get(item_id);
     match &item.kind {
         ItemKind::Import(import) => visitor.visit_import(item_id, import, ctx),
+        ItemKind::Const(const_def) => visitor.visit_const(item_id, const_def, ctx),
     }
 }

@@ -2,8 +2,10 @@ mod arena;
 pub mod common;
 pub mod ctx;
 pub mod debug_ast;
+pub mod expr;
 mod interner;
 pub mod item;
+pub mod ty;
 pub mod span;
 pub mod visit;
 

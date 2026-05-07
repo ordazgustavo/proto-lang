@@ -1,7 +1,9 @@
 use crate::{
     arena::{Arena, Id},
-    common::ModPath,
+    common::{Ident, ModPath},
+    expr::ExprId,
     span::Span,
+    ty::TypeId,
 };
 
 #[derive(Debug)]
@@ -16,7 +18,7 @@ pub type ItemId = Id<Item>;
 #[derive(Debug)]
 pub enum ItemKind {
     Import(ImportDef),
-    // Const,
+    Const(ConstDef),
     // Function,
     // Struct,
     // Enum,
@@ -26,4 +28,11 @@ pub enum ItemKind {
 #[derive(Debug)]
 pub struct ImportDef {
     pub path: ModPath,
+}
+
+#[derive(Debug)]
+pub struct ConstDef {
+    pub name: Ident,
+    pub ty: TypeId,
+    pub value: ExprId,
 }
