@@ -10,8 +10,6 @@ pub struct Item {
     pub span: Span,
 }
 
-// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-// pub struct ItemId(pub(crate) u32);
 pub type ItemArena = Arena<Item>;
 pub type ItemId = Id<Item>;
 

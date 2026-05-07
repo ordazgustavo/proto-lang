@@ -89,10 +89,7 @@ impl<'a> Parser<'a> {
                 span: first.span,
             });
 
-            if let Some(separator) = self
-                .lexer
-                .next_if(|t| t.kind == TokenKind::ColonColon)
-            {
+            if let Some(separator) = self.lexer.next_if(|t| t.kind == TokenKind::ColonColon) {
                 // If we hit EOF after `::`, report against the separator location.
                 expected_ident_span = separator.span;
             } else {
@@ -105,17 +102,18 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use ast::{
-        ctx::AstCtx,
-        item::ItemKind,
-        span::FileId,
-    };
+    use ast::{ctx::AstCtx, item::ItemKind, span::FileId};
     use lexer::token::TokenKind;
 
     use super::Parser;
     use crate::error::ParseErrorKind;
 
-    fn parse(source: &str) -> (AstCtx, Result<Vec<ast::item::ItemId>, crate::error::ParseError>) {
+    fn parse(
+        source: &str,
+    ) -> (
+        AstCtx,
+        Result<Vec<ast::item::ItemId>, crate::error::ParseError>,
+    ) {
         let mut ctx = AstCtx::new();
         let mut parser = Parser::new(&mut ctx, source, FileId(0));
         let result = parser.parse_program();
