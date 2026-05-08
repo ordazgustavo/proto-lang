@@ -20,7 +20,7 @@ pub enum ItemKind {
     Import(ImportDef),
     Const(ConstDef),
     Function(FunctionDef),
-    // Struct,
+    Struct(StructDef),
     // Enum,
     // Extend,
 }
@@ -44,6 +44,13 @@ pub struct FunctionDef {
     pub params: Vec<Param>,
     pub return_type: Option<TypeId>,
     pub body: Block,
+}
+
+#[derive(Debug)]
+pub struct StructDef {
+    pub name: Ident,
+    pub generic_params: Vec<Ident>,
+    pub fields: Vec<Param>,
 }
 
 #[derive(Debug)]

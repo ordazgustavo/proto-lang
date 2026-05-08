@@ -5,7 +5,7 @@ use ast::{
     ctx::AstCtx,
     item::{
         Block, ConstDef, FunctionDef, ImportDef, Item, ItemId, ItemKind, Param, ParamLabel, Stmt,
-        StmtKind,
+        StmtKind, StructDef,
     },
     span::{FileId, Span},
     ty::{Type, TypeId, TypeKind},
@@ -49,6 +49,7 @@ impl<'a> Parser<'a> {
             TokenKind::KwImport => self.parse_import_def(token.span),
             TokenKind::KwConst => self.parse_const_def(token.span),
             TokenKind::KwFn => self.parse_function_def(token.span),
+            TokenKind::KwStruct => self.parse_struct_def(token.span),
             _ => Err(ParseError::expected_item(token.kind, token.span)),
         }
     }
@@ -145,7 +146,7 @@ impl<'a> Parser<'a> {
         let name = self.ident_from_token(&name_tok);
         let generic_params = self.parse_generic_params()?;
         let lparen = self.expect(TokenKind::LParen, name.span)?;
-        let params = self.parse_params(lparen.span)?;
+        let (params, _) = self.parse_params(lparen.span)?;
         let return_type = if self
             .lexer
             .next_if(|token| token.kind == TokenKind::Arrow)
@@ -168,6 +169,24 @@ impl<'a> Parser<'a> {
         };
         Ok(self.ctx.alloc_item(Item {
             kind: ItemKind::Function(def),
+            span: item_span,
+        }))
+    }
+
+    fn parse_struct_def(&mut self, struct_span: Span) -> PResult<ItemId> {
+        let name_tok = self.expect(TokenKind::Ident, struct_span)?;
+        let name = self.ident_from_token(&name_tok);
+        let generic_params = self.parse_generic_params()?;
+        let lparen = self.expect(TokenKind::LParen, name.span)?;
+        let (fields, rparen_span) = self.parse_params(lparen.span)?;
+        let item_span = struct_span.merge(rparen_span);
+        let def = StructDef {
+            name,
+            generic_params,
+            fields,
+        };
+        Ok(self.ctx.alloc_item(Item {
+            kind: ItemKind::Struct(def),
             span: item_span,
         }))
     }
@@ -243,14 +262,10 @@ impl<'a> Parser<'a> {
         Ok((args, gt.span))
     }
 
-    fn parse_params(&mut self, lparen_span: Span) -> PResult<Vec<Param>> {
+    fn parse_params(&mut self, lparen_span: Span) -> PResult<(Vec<Param>, Span)> {
         let mut params = Vec::new();
-        if self
-            .lexer
-            .next_if(|token| token.kind == TokenKind::RParen)
-            .is_some()
-        {
-            return Ok(params);
+        if let Some(rparen) = self.lexer.next_if(|token| token.kind == TokenKind::RParen) {
+            return Ok((params, rparen.span));
         }
 
         loop {
@@ -262,20 +277,16 @@ impl<'a> Parser<'a> {
             {
                 break;
             }
-            if self
-                .lexer
-                .next_if(|token| token.kind == TokenKind::RParen)
-                .is_some()
-            {
-                return Ok(params);
+            if let Some(rparen) = self.lexer.next_if(|token| token.kind == TokenKind::RParen) {
+                return Ok((params, rparen.span));
             }
         }
 
         let prev = params
             .last()
             .map_or(lparen_span, |param| self.ctx.get_type(param.ty).span);
-        self.expect(TokenKind::RParen, prev)?;
-        Ok(params)
+        let rparen = self.expect(TokenKind::RParen, prev)?;
+        Ok((params, rparen.span))
     }
 
     fn parse_param(&mut self) -> PResult<Param> {
@@ -357,7 +368,7 @@ mod tests {
         AstVisitor,
         ctx::AstCtx,
         expr::{ExprId, ExprKind, LitKind},
-        item::{ConstDef, ImportDef, ItemId},
+        item::{ConstDef, ImportDef, ItemId, StructDef},
         span::FileId,
         ty::TypeKind,
         walk_program,
@@ -540,6 +551,38 @@ mod tests {
                     ast::item::StmtKind::Expr(expr) => self.write_expr("  expr", expr, ctx),
                 }
             }
+        }
+
+        fn visit_struct(&mut self, _item_id: ItemId, def: &StructDef, ctx: &AstCtx) {
+            let _ = write!(&mut self.out, "struct {}", ctx.get_str(def.name.name));
+            if !def.generic_params.is_empty() {
+                self.out.push('<');
+                for (idx, generic) in def.generic_params.iter().enumerate() {
+                    if idx > 0 {
+                        self.out.push_str(", ");
+                    }
+                    self.out.push_str(ctx.get_str(generic.name));
+                }
+                self.out.push('>');
+            }
+            self.out.push('(');
+            for (idx, field) in def.fields.iter().enumerate() {
+                if idx > 0 {
+                    self.out.push_str(", ");
+                }
+                match &field.label {
+                    ast::item::ParamLabel::Implicit => {}
+                    ast::item::ParamLabel::Explicit(label) => {
+                        self.out.push_str(ctx.get_str(label.name));
+                        self.out.push(' ');
+                    }
+                    ast::item::ParamLabel::Suppressed => self.out.push_str("_ "),
+                }
+                self.out.push_str(ctx.get_str(field.name.name));
+                self.out.push_str(": ");
+                self.write_type(field.ty, ctx);
+            }
+            self.out.push_str(")\n");
         }
     }
 
@@ -798,6 +841,100 @@ mod tests {
             ParsedProgram { ctx, items }.compact_ast(),
             "const OPT: std::Option\n  value: int\n"
         );
+    }
+
+    #[test]
+    fn parses_empty_struct() {
+        let parsed = parse_ok("struct Empty()");
+
+        assert_eq!(parsed.compact_ast(), "struct Empty()\n");
+    }
+
+    #[test]
+    fn parses_struct_fields_with_trailing_comma() {
+        let parsed = parse_ok("struct Point(x: f32, y: f32,)");
+
+        assert_eq!(parsed.compact_ast(), "struct Point(x: f32, y: f32)\n");
+    }
+
+    #[test]
+    fn parses_generic_struct_with_generic_field_type() {
+        let parsed = parse_ok("struct Box<T>(value: Option<T>)");
+
+        assert_eq!(parsed.compact_ast(), "struct Box<T>(value: Option<T>)\n");
+    }
+
+    #[test]
+    fn parses_struct_field_labels() {
+        let parsed = parse_ok("struct P(public x: f32, _ y: f32)");
+
+        assert_eq!(parsed.compact_ast(), "struct P(public x: f32, _ y: f32)\n");
+    }
+
+    #[test]
+    fn parses_mixed_items_with_struct() {
+        let parsed = parse_ok("import std\nstruct Empty()\nconst X: i32 = 1\nfn main() {}");
+
+        assert_eq!(
+            parsed.compact_ast(),
+            "import std\nstruct Empty()\nconst X: i32\n  value: int\nfn main()\n"
+        );
+    }
+
+    #[test]
+    fn struct_span_ends_at_close_paren() {
+        let source = "struct Empty()\nfn main() {}";
+        let (ctx, result) = parse(source);
+        let items = result.expect("parser should accept source");
+        let item = ctx.get_item(items[0]);
+
+        assert_eq!(item.span.start, 0);
+        assert_eq!(item.span.end, "struct Empty()".len());
+    }
+
+    #[test]
+    fn errors_on_struct_missing_name() {
+        let err = parse_err("struct");
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::UnexpectedEof {
+                expected: Some(TokenKind::Ident)
+            }
+        ));
+    }
+
+    #[test]
+    fn errors_on_struct_missing_paren() {
+        let err = parse_err("struct Empty");
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::UnexpectedEof {
+                expected: Some(TokenKind::LParen)
+            }
+        ));
+    }
+
+    #[test]
+    fn errors_on_bad_struct_field() {
+        let err = parse_err("struct P(1: T)");
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::Expected {
+                expected: TokenKind::Ident,
+                found: TokenKind::Integer
+            }
+        ));
+    }
+
+    #[test]
+    fn errors_on_struct_missing_close_paren() {
+        let err = parse_err("struct P(x: T");
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::UnexpectedEof {
+                expected: Some(TokenKind::RParen)
+            }
+        ));
     }
 
     #[test]

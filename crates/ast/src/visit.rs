@@ -1,6 +1,6 @@
 use crate::{
     ctx::AstCtx,
-    item::{ConstDef, FunctionDef, ImportDef, ItemId, ItemKind},
+    item::{ConstDef, FunctionDef, ImportDef, ItemId, ItemKind, StructDef},
 };
 
 pub trait AstVisitor {
@@ -13,6 +13,8 @@ pub trait AstVisitor {
     fn visit_const(&mut self, _item_id: ItemId, _const_def: &ConstDef, _ctx: &AstCtx) {}
 
     fn visit_function(&mut self, _item_id: ItemId, _function: &FunctionDef, _ctx: &AstCtx) {}
+
+    fn visit_struct(&mut self, _item_id: ItemId, _struct_def: &StructDef, _ctx: &AstCtx) {}
 }
 
 pub fn walk_program<V: AstVisitor + ?Sized>(visitor: &mut V, items: &[ItemId], ctx: &AstCtx) {
@@ -27,5 +29,6 @@ pub fn walk_item<V: AstVisitor + ?Sized>(visitor: &mut V, item_id: ItemId, ctx: 
         ItemKind::Import(import) => visitor.visit_import(item_id, import, ctx),
         ItemKind::Const(const_def) => visitor.visit_const(item_id, const_def, ctx),
         ItemKind::Function(function) => visitor.visit_function(item_id, function, ctx),
+        ItemKind::Struct(struct_def) => visitor.visit_struct(item_id, struct_def, ctx),
     }
 }

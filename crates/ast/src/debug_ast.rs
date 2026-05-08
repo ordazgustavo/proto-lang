@@ -3,7 +3,7 @@ use std::fmt::Write;
 use crate::{
     ctx::AstCtx,
     expr::{ExprId, ExprKind, LitKind},
-    item::{ConstDef, FunctionDef, ImportDef, ItemId, ParamLabel, StmtKind},
+    item::{ConstDef, FunctionDef, ImportDef, ItemId, Param, ParamLabel, StmtKind, StructDef},
     ty::TypeKind,
     visit::{AstVisitor, walk_program},
 };
@@ -103,9 +103,47 @@ impl AstVisitor for DebugAstPrinterVisitor {
             }
         }
     }
+
+    fn visit_struct(&mut self, item_id: ItemId, def: &StructDef, ctx: &AstCtx) {
+        let item = ctx.get_item(item_id);
+        let _ = writeln!(
+            &mut self.out,
+            "struct {} [{:?}]",
+            ctx.get_str(def.name.name),
+            item.span
+        );
+        for generic in &def.generic_params {
+            let _ = writeln!(&mut self.out, "  generic: {}", ctx.get_str(generic.name));
+        }
+        for field in &def.fields {
+            self.write_param("  field", field, ctx);
+        }
+    }
 }
 
 impl DebugAstPrinterVisitor {
+    fn write_param(&mut self, label: &str, param: &Param, ctx: &AstCtx) {
+        match &param.label {
+            ParamLabel::Implicit => {
+                let _ = write!(&mut self.out, "{label} {}", ctx.get_str(param.name.name));
+            }
+            ParamLabel::Explicit(param_label) => {
+                let _ = write!(
+                    &mut self.out,
+                    "{label} {} {}",
+                    ctx.get_str(param_label.name),
+                    ctx.get_str(param.name.name)
+                );
+            }
+            ParamLabel::Suppressed => {
+                let _ = write!(&mut self.out, "{label} _ {}", ctx.get_str(param.name.name));
+            }
+        }
+        self.out.push_str(": ");
+        self.write_type_inline(param.ty, ctx);
+        self.out.push('\n');
+    }
+
     fn write_type(&mut self, label: &str, ty_id: crate::ty::TypeId, ctx: &AstCtx) {
         self.out.push_str(label);
         self.out.push_str(": ");
