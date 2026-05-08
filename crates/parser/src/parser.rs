@@ -4,8 +4,8 @@ use ast::{
     common::{Ident, ModPath},
     ctx::AstCtx,
     item::{
-        Block, ConstDef, FunctionDef, ImportDef, Item, ItemId, ItemKind, Param, ParamLabel, Stmt,
-        StmtKind, StructDef,
+        Block, ConstDef, EnumDef, EnumVariant, FunctionDef, ImportDef, Item, ItemId, ItemKind,
+        Param, ParamLabel, Stmt, StmtKind, StructDef,
     },
     span::{FileId, Span},
     ty::{Type, TypeId, TypeKind},
@@ -50,6 +50,7 @@ impl<'a> Parser<'a> {
             TokenKind::KwConst => self.parse_const_def(token.span),
             TokenKind::KwFn => self.parse_function_def(token.span),
             TokenKind::KwStruct => self.parse_struct_def(token.span),
+            TokenKind::KwEnum => self.parse_enum_def(token.span),
             _ => Err(ParseError::expected_item(token.kind, token.span)),
         }
     }
@@ -189,6 +190,95 @@ impl<'a> Parser<'a> {
             kind: ItemKind::Struct(def),
             span: item_span,
         }))
+    }
+
+    fn parse_enum_def(&mut self, enum_span: Span) -> PResult<ItemId> {
+        let name_tok = self.expect(TokenKind::Ident, enum_span)?;
+        let name = self.ident_from_token(&name_tok);
+        let generic_params = self.parse_generic_params()?;
+        let lbrace = self.expect(TokenKind::LBrace, name.span)?;
+        let mut variants = Vec::new();
+
+        if let Some(rbrace) = self.lexer.next_if(|token| token.kind == TokenKind::RBrace) {
+            let def = EnumDef {
+                name,
+                generic_params,
+                variants,
+            };
+            return Ok(self.ctx.alloc_item(Item {
+                kind: ItemKind::Enum(def),
+                span: enum_span.merge(rbrace.span),
+            }));
+        }
+
+        loop {
+            variants.push(self.parse_enum_variant()?);
+            if self
+                .lexer
+                .next_if(|token| token.kind == TokenKind::Comma)
+                .is_none()
+            {
+                break;
+            }
+            if self
+                .lexer
+                .peek()
+                .is_some_and(|token| matches!(token.kind, TokenKind::RBrace | TokenKind::Eof))
+            {
+                break;
+            }
+        }
+
+        let prev = variants
+            .last()
+            .and_then(|variant| {
+                variant
+                    .payload
+                    .last()
+                    .map(|ty| self.ctx.get_type(*ty).span)
+                    .or(Some(variant.name.span))
+            })
+            .unwrap_or(lbrace.span);
+        let rbrace = self.expect(TokenKind::RBrace, prev)?;
+        let def = EnumDef {
+            name,
+            generic_params,
+            variants,
+        };
+        Ok(self.ctx.alloc_item(Item {
+            kind: ItemKind::Enum(def),
+            span: enum_span.merge(rbrace.span),
+        }))
+    }
+
+    fn parse_enum_variant(&mut self) -> PResult<EnumVariant> {
+        let prev = self.prev_span();
+        let name_tok = self.expect(TokenKind::Ident, prev)?;
+        let name = self.ident_from_token(&name_tok);
+        let mut payload = Vec::new();
+
+        if self
+            .lexer
+            .next_if(|token| token.kind == TokenKind::LParen)
+            .is_some()
+        {
+            loop {
+                payload.push(self.parse_type(name.span)?);
+                if self
+                    .lexer
+                    .next_if(|token| token.kind == TokenKind::Comma)
+                    .is_none()
+                {
+                    break;
+                }
+            }
+            let prev = payload
+                .last()
+                .map_or(name.span, |ty| self.ctx.get_type(*ty).span);
+            self.expect(TokenKind::RParen, prev)?;
+        }
+
+        Ok(EnumVariant { name, payload })
     }
 
     pub(crate) fn parse_type(&mut self, prev_span: Span) -> PResult<TypeId> {
@@ -451,8 +541,18 @@ mod tests {
                         let _ = writeln!(&mut self.out, "{label}: str");
                     }
                 },
-                ExprKind::Path(ident) => {
-                    let _ = writeln!(&mut self.out, "{label}: path {}", ctx.get_str(ident.name));
+                ExprKind::Path(path) => {
+                    self.out.push_str(label);
+                    self.out.push_str(": path ");
+                    self.write_path(path, ctx);
+                    self.out.push('\n');
+                }
+                ExprKind::ImplicitMember(member) => {
+                    let _ = writeln!(
+                        &mut self.out,
+                        "{label}: implicit member {}",
+                        ctx.get_str(member.name)
+                    );
                 }
                 ExprKind::Unary(unary) => {
                     let _ = writeln!(&mut self.out, "{label}: unary {:?}", unary.op);
@@ -583,6 +683,38 @@ mod tests {
                 self.write_type(field.ty, ctx);
             }
             self.out.push_str(")\n");
+        }
+
+        fn visit_enum(&mut self, _item_id: ItemId, def: &ast::item::EnumDef, ctx: &AstCtx) {
+            let _ = write!(&mut self.out, "enum {}", ctx.get_str(def.name.name));
+            if !def.generic_params.is_empty() {
+                self.out.push('<');
+                for (idx, generic) in def.generic_params.iter().enumerate() {
+                    if idx > 0 {
+                        self.out.push_str(", ");
+                    }
+                    self.out.push_str(ctx.get_str(generic.name));
+                }
+                self.out.push('>');
+            }
+            self.out.push_str(" {");
+            for (idx, variant) in def.variants.iter().enumerate() {
+                if idx > 0 {
+                    self.out.push_str(", ");
+                }
+                self.out.push_str(ctx.get_str(variant.name.name));
+                if !variant.payload.is_empty() {
+                    self.out.push('(');
+                    for (idx, ty) in variant.payload.iter().enumerate() {
+                        if idx > 0 {
+                            self.out.push_str(", ");
+                        }
+                        self.write_type(*ty, ctx);
+                    }
+                    self.out.push(')');
+                }
+            }
+            self.out.push_str("}\n");
         }
     }
 
@@ -879,6 +1011,97 @@ mod tests {
             parsed.compact_ast(),
             "import std\nstruct Empty()\nconst X: i32\n  value: int\nfn main()\n"
         );
+    }
+
+    #[test]
+    fn parses_empty_enum() {
+        let parsed = parse_ok("enum Void {}");
+
+        assert_eq!(parsed.compact_ast(), "enum Void {}\n");
+    }
+
+    #[test]
+    fn parses_enum_variants_payloads_generics_and_trailing_comma() {
+        let parsed = parse_ok("enum Option<T> { some(T), none, }");
+
+        assert_eq!(parsed.compact_ast(), "enum Option<T> {some(T), none}\n");
+    }
+
+    #[test]
+    fn parses_explicit_enum_member_call() {
+        let parsed = parse_ok("const X: Option = Option.some(1)");
+
+        assert_eq!(
+            parsed.compact_ast(),
+            "const X: Option\n  value: call\n  callee: field some\n  base: path Option\n  arg\n    value: int\n"
+        );
+    }
+
+    #[test]
+    fn parses_qualified_enum_member_call() {
+        let parsed = parse_ok("const X: Option = std::Option.some(1)");
+
+        assert_eq!(
+            parsed.compact_ast(),
+            "const X: Option\n  value: call\n  callee: field some\n  base: path std::Option\n  arg\n    value: int\n"
+        );
+    }
+
+    #[test]
+    fn parses_implicit_enum_member_call_and_value() {
+        let parsed = parse_ok("const A: Option = .some(1)\nconst B: Option = .none");
+
+        assert_eq!(
+            parsed.compact_ast(),
+            "const A: Option\n  value: call\n  callee: implicit member some\n  arg\n    value: int\nconst B: Option\n  value: implicit member none\n"
+        );
+    }
+
+    #[test]
+    fn errors_on_enum_missing_variant_name() {
+        let err = parse_err("enum E { 1 }");
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::Expected {
+                expected: TokenKind::Ident,
+                found: TokenKind::Integer
+            }
+        ));
+    }
+
+    #[test]
+    fn errors_on_enum_missing_payload_type() {
+        let err = parse_err("enum E { some(, none }");
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::Expected {
+                expected: TokenKind::Ident,
+                found: TokenKind::Comma
+            }
+        ));
+    }
+
+    #[test]
+    fn errors_on_empty_enum_payload() {
+        let err = parse_err("enum E { none() }");
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::Expected {
+                expected: TokenKind::Ident,
+                found: TokenKind::RParen
+            }
+        ));
+    }
+
+    #[test]
+    fn errors_on_dangling_dot_expr() {
+        let err = parse_err("const X: T = .");
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::UnexpectedEof {
+                expected: Some(TokenKind::Ident)
+            }
+        ));
     }
 
     #[test]

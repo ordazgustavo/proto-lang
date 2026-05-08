@@ -27,8 +27,10 @@ import      = { "import" ~ ident ~ ("::" ~ ident)* }
 const       = { "const" ~ ident ~ binding_type ~ "=" ~ expr }
 function    = { "fn" ~ ident ~ generic_params? ~ "(" ~ params? ~ ")" ~ return_type? ~ block }
 struct      = { "struct" ~ ident ~ generic_params? ~ "(" ~ params? ~ ")" }
-enum        = { "enum" ~ ident ~ generic_params? ~ "{" ~ enum_member? ~ "}" }
-enum_member = { ident ~ ("," ~ ident)* ~ ","? }
+enum         = { "enum" ~ ident ~ generic_params? ~ "{" ~ enum_variants? ~ "}" }
+enum_variants = { enum_variant ~ ("," ~ enum_variant)* ~ ","? }
+enum_variant  = { ident ~ ("(" ~ type_list ~ ")")? }
+type_list     = { type ~ ("," ~ type)* ~ ","? }
 extend      = { "extend" ~ ident ~ generic_params? ~ "{" ~ extend_body ~ "}" }
 extend_body = { method* }
 
@@ -82,7 +84,7 @@ unary    = { unary_op ~ unary | postfix }
 unary_op = { "-" | "!" }
 
 // Postfix: field access and method calls
-postfix         = { primary ~ postfix_op* }
+postfix         = { (primary | implicit_member) ~ postfix_op* }
 postfix_op      = { method_call | field_access_op }
 method_call     = { "." ~ ident ~ turbofish? ~ "(" ~ args? ~ ")" }
 field_access_op = { "." ~ ident }
@@ -92,7 +94,9 @@ field_access = { (self_keyword | ident) ~ ("." ~ ident)+ }
 self_keyword = { "self" }
 
 // Primary expressions
-primary = _{ function_call | literal | self_keyword | ident | "(" ~ expr ~ ")" }
+primary = _{ function_call | literal | self_keyword | expr_path | "(" ~ expr ~ ")" }
+implicit_member = { "." ~ ident }
+expr_path = { ident ~ ("::" ~ ident)* }
 
 // Function call (standalone, not method): name(args)
 function_call = { ident ~ turbofish? ~ "(" ~ args? ~ ")" }

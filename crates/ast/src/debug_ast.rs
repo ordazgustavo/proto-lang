@@ -3,7 +3,9 @@ use std::fmt::Write;
 use crate::{
     ctx::AstCtx,
     expr::{ExprId, ExprKind, LitKind},
-    item::{ConstDef, FunctionDef, ImportDef, ItemId, Param, ParamLabel, StmtKind, StructDef},
+    item::{
+        ConstDef, EnumDef, FunctionDef, ImportDef, ItemId, Param, ParamLabel, StmtKind, StructDef,
+    },
     ty::TypeKind,
     visit::{AstVisitor, walk_program},
 };
@@ -119,6 +121,37 @@ impl AstVisitor for DebugAstPrinterVisitor {
             self.write_param("  field", field, ctx);
         }
     }
+
+    fn visit_enum(&mut self, item_id: ItemId, def: &EnumDef, ctx: &AstCtx) {
+        let item = ctx.get_item(item_id);
+        let _ = writeln!(
+            &mut self.out,
+            "enum {} [{:?}]",
+            ctx.get_str(def.name.name),
+            item.span
+        );
+        for generic in &def.generic_params {
+            let _ = writeln!(&mut self.out, "  generic: {}", ctx.get_str(generic.name));
+        }
+        for variant in &def.variants {
+            let _ = write!(
+                &mut self.out,
+                "  variant {}",
+                ctx.get_str(variant.name.name)
+            );
+            if !variant.payload.is_empty() {
+                self.out.push('(');
+                for (idx, ty) in variant.payload.iter().enumerate() {
+                    if idx > 0 {
+                        self.out.push_str(", ");
+                    }
+                    self.write_type_inline(*ty, ctx);
+                }
+                self.out.push(')');
+            }
+            self.out.push('\n');
+        }
+    }
 }
 
 impl DebugAstPrinterVisitor {
@@ -195,12 +228,25 @@ impl DebugAstPrinterVisitor {
                     let _ = writeln!(&mut self.out, "{}: Str [{:?}]", label, lit.span);
                 }
             },
-            ExprKind::Path(ident) => {
+            ExprKind::Path(path) => {
                 let _ = writeln!(
                     &mut self.out,
                     "{}: Path {} [{:?}]",
                     label,
-                    ctx.get_str(ident.name),
+                    path.0
+                        .iter()
+                        .map(|ident| ctx.get_str(ident.name))
+                        .collect::<Vec<_>>()
+                        .join("::"),
+                    expr.span
+                );
+            }
+            ExprKind::ImplicitMember(member) => {
+                let _ = writeln!(
+                    &mut self.out,
+                    "{}: ImplicitMember {} [{:?}]",
+                    label,
+                    ctx.get_str(member.name),
                     expr.span
                 );
             }

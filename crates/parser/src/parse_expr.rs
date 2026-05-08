@@ -1,4 +1,5 @@
 use ast::{
+    common::ModPath,
     expr::{
         Arg, BinaryExpr, BinaryOp, CallExpr, Expr, ExprId, ExprKind, FieldExpr, Lit, LitKind,
         UnaryExpr, UnaryOp,
@@ -73,10 +74,24 @@ impl<'a> Parser<'a> {
                 Ok(expr)
             }
             TokenKind::Ident | TokenKind::KwSelf => {
-                let ident = self.ident_from_token(&token);
+                let token_span = token.span;
+                let path = self.parse_path_expr(token)?;
                 Ok(self.ctx.alloc_expr(Expr {
-                    kind: ExprKind::Path(ident),
-                    span: token.span,
+                    span: path
+                        .0
+                        .last()
+                        .map(|ident| token_span.merge(ident.span))
+                        .unwrap_or(token_span),
+                    kind: ExprKind::Path(path),
+                }))
+            }
+            TokenKind::Dot => {
+                let member = self.expect(TokenKind::Ident, token.span)?;
+                let member = self.ident_from_token(&member);
+                let span = token.span.merge(member.span);
+                Ok(self.ctx.alloc_expr(Expr {
+                    kind: ExprKind::ImplicitMember(member),
+                    span,
                 }))
             }
             TokenKind::Integer
@@ -88,6 +103,30 @@ impl<'a> Parser<'a> {
             TokenKind::Eof => Err(ParseError::unexpected_eof(None, token.span)),
             _ => Err(ParseError::expected_expr(token.kind, token.span)),
         }
+    }
+
+    fn parse_path_expr(&mut self, first: Token) -> PResult<ModPath> {
+        let mut path = vec![self.ident_from_token(&first)];
+        let mut prev = first.span;
+        while self
+            .lexer
+            .peek()
+            .is_some_and(|token| token.kind == TokenKind::ColonColon)
+        {
+            let mut lookahead = self.lexer.clone();
+            lookahead.next();
+            if !lookahead
+                .next()
+                .is_some_and(|token| token.kind == TokenKind::Ident)
+            {
+                break;
+            }
+            self.lexer.next();
+            let token = self.expect(TokenKind::Ident, prev)?;
+            prev = token.span;
+            path.push(self.ident_from_token(&token));
+        }
+        Ok(ModPath(path))
     }
 
     fn parse_dot_postfix(&mut self, lhs: ExprId) -> PResult<ExprId> {

@@ -1,6 +1,6 @@
 use crate::{
     arena::{Arena, Id},
-    common::Ident,
+    common::{Ident, ModPath},
     span::Span,
     ty::TypeId,
 };
@@ -14,7 +14,8 @@ pub struct Expr {
 #[derive(Debug)]
 pub enum ExprKind {
     Literal(Lit),
-    Path(Ident),
+    Path(ModPath),
+    ImplicitMember(Ident),
     Unary(UnaryExpr),
     Binary(BinaryExpr),
     Call(CallExpr),
