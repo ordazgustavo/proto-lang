@@ -589,7 +589,7 @@ mod tests {
 
     #[test]
     fn lexes_kitchen_synk_prefix() {
-        let sample = include_str!("../../../assets/kitchen_synk.pr");
+        let sample = include_str!("../../../assets/kitchen_sink.pr");
         let first = Lexer::new(sample, FileId(0))
             .take(7)
             .map(|token| token.kind)

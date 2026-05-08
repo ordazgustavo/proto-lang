@@ -59,7 +59,7 @@ where
         &self.data[A::index(id)]
     }
 
-    pub fn get_mut(&mut self, id: u32) -> &mut T {
-        &mut self.data[id as usize]
+    pub fn get_mut(&mut self, id: A::Id) -> &mut T {
+        &mut self.data[A::index(id) as usize]
     }
 }
