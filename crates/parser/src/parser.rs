@@ -3,7 +3,10 @@ use std::iter::Peekable;
 use ast::{
     common::{Ident, ModPath},
     ctx::AstCtx,
-    item::{ConstDef, ImportDef, Item, ItemId, ItemKind},
+    item::{
+        Block, ConstDef, FunctionDef, ImportDef, Item, ItemId, ItemKind, Param, ParamLabel, Stmt,
+        StmtKind,
+    },
     span::{FileId, Span},
     ty::{Type, TypeId, TypeKind},
 };
@@ -45,6 +48,7 @@ impl<'a> Parser<'a> {
         match token.kind {
             TokenKind::KwImport => self.parse_import_def(token.span),
             TokenKind::KwConst => self.parse_const_def(token.span),
+            TokenKind::KwFn => self.parse_function_def(token.span),
             _ => Err(ParseError::expected_item(token.kind, token.span)),
         }
     }
@@ -136,17 +140,212 @@ impl<'a> Parser<'a> {
         Ok(self.ctx.alloc_item(item))
     }
 
+    fn parse_function_def(&mut self, fn_span: Span) -> PResult<ItemId> {
+        let name_tok = self.expect(TokenKind::Ident, fn_span)?;
+        let name = self.ident_from_token(&name_tok);
+        let generic_params = self.parse_generic_params()?;
+        let lparen = self.expect(TokenKind::LParen, name.span)?;
+        let params = self.parse_params(lparen.span)?;
+        let return_type = if self
+            .lexer
+            .next_if(|token| token.kind == TokenKind::Arrow)
+            .is_some()
+        {
+            let prev = self.prev_span();
+            Some(self.parse_type(prev)?)
+        } else {
+            None
+        };
+        let body =
+            self.parse_block(return_type.map_or(name.span, |ty| self.ctx.get_type(ty).span))?;
+        let item_span = fn_span.merge(body.span);
+        let def = FunctionDef {
+            name,
+            generic_params,
+            params,
+            return_type,
+            body,
+        };
+        Ok(self.ctx.alloc_item(Item {
+            kind: ItemKind::Function(def),
+            span: item_span,
+        }))
+    }
+
     pub(crate) fn parse_type(&mut self, prev_span: Span) -> PResult<TypeId> {
         let path = self.parse_path(prev_span)?;
-        let span = match (path.0.first(), path.0.last()) {
+        let path_span = match (path.0.first(), path.0.last()) {
             (Some(first), Some(last)) => first.span.merge(last.span),
             _ => prev_span,
         };
+        let (generic_args, span) = if self
+            .lexer
+            .next_if(|token| token.kind == TokenKind::Lt)
+            .is_some()
+        {
+            let (generic_args, gt_span) = self.parse_type_args(path_span)?;
+            (generic_args, path_span.merge(gt_span))
+        } else {
+            (Vec::new(), path_span)
+        };
         let ty = Type {
-            kind: TypeKind::Path(path),
+            kind: TypeKind::Path { path, generic_args },
             span,
         };
         Ok(self.ctx.alloc_type(ty))
+    }
+
+    fn parse_generic_params(&mut self) -> PResult<Vec<Ident>> {
+        if self
+            .lexer
+            .next_if(|token| token.kind == TokenKind::Lt)
+            .is_none()
+        {
+            return Ok(Vec::new());
+        }
+
+        let mut params = Vec::new();
+        loop {
+            let prev = params
+                .last()
+                .map_or_else(|| self.prev_span(), |ident: &Ident| ident.span);
+            let token = self.expect(TokenKind::Ident, prev)?;
+            params.push(self.ident_from_token(&token));
+            if self
+                .lexer
+                .next_if(|token| token.kind == TokenKind::Comma)
+                .is_none()
+            {
+                break;
+            }
+        }
+        let prev = params.last().map_or_else(|| self.prev_span(), |p| p.span);
+        self.expect(TokenKind::Gt, prev)?;
+        Ok(params)
+    }
+
+    fn parse_type_args(&mut self, prev_span: Span) -> PResult<(Vec<TypeId>, Span)> {
+        let mut args = Vec::new();
+        loop {
+            args.push(self.parse_type(prev_span)?);
+            if self
+                .lexer
+                .next_if(|token| token.kind == TokenKind::Comma)
+                .is_none()
+            {
+                break;
+            }
+        }
+        let last_span = args
+            .last()
+            .map_or(prev_span, |ty| self.ctx.get_type(*ty).span);
+        let gt = self.expect(TokenKind::Gt, last_span)?;
+        Ok((args, gt.span))
+    }
+
+    fn parse_params(&mut self, lparen_span: Span) -> PResult<Vec<Param>> {
+        let mut params = Vec::new();
+        if self
+            .lexer
+            .next_if(|token| token.kind == TokenKind::RParen)
+            .is_some()
+        {
+            return Ok(params);
+        }
+
+        loop {
+            params.push(self.parse_param()?);
+            if self
+                .lexer
+                .next_if(|token| token.kind == TokenKind::Comma)
+                .is_none()
+            {
+                break;
+            }
+            if self
+                .lexer
+                .next_if(|token| token.kind == TokenKind::RParen)
+                .is_some()
+            {
+                return Ok(params);
+            }
+        }
+
+        let prev = params
+            .last()
+            .map_or(lparen_span, |param| self.ctx.get_type(param.ty).span);
+        self.expect(TokenKind::RParen, prev)?;
+        Ok(params)
+    }
+
+    fn parse_param(&mut self) -> PResult<Param> {
+        let prev = self.prev_span();
+        let first = self.expect(TokenKind::Ident, prev)?;
+        let first_ident = self.ident_from_token(&first);
+
+        let (label, name) = if self
+            .lexer
+            .peek()
+            .is_some_and(|token| token.kind == TokenKind::Ident)
+        {
+            let name_tok = self.expect(TokenKind::Ident, first.span)?;
+            let label = if &self.source[first.span.range()] == "_" {
+                ParamLabel::Suppressed
+            } else {
+                ParamLabel::Explicit(first_ident)
+            };
+            (label, self.ident_from_token(&name_tok))
+        } else {
+            (ParamLabel::Implicit, first_ident)
+        };
+
+        let colon = self.expect(TokenKind::Colon, name.span)?;
+        let ty = self.parse_type(colon.span)?;
+        Ok(Param { label, name, ty })
+    }
+
+    fn parse_block(&mut self, prev_span: Span) -> PResult<Block> {
+        let lbrace = self.expect(TokenKind::LBrace, prev_span)?;
+        let mut stmts = Vec::new();
+        while !self
+            .lexer
+            .peek()
+            .is_some_and(|token| matches!(token.kind, TokenKind::RBrace | TokenKind::Eof))
+        {
+            let expr = self.parse_expr()?;
+            let span = self.ctx.get_expr(expr).span;
+            stmts.push(Stmt {
+                kind: StmtKind::Expr(expr),
+                span,
+            });
+        }
+        let rbrace = self.expect(TokenKind::RBrace, lbrace.span)?;
+        Ok(Block {
+            stmts,
+            span: lbrace.span.merge(rbrace.span),
+        })
+    }
+
+    pub(crate) fn ident_from_token(&mut self, token: &Token) -> Ident {
+        let name = self.ctx.intern_str(&self.source[token.span.range()]);
+        Ident {
+            name,
+            span: token.span,
+        }
+    }
+
+    pub(crate) fn eof_span(&mut self) -> Span {
+        self.lexer
+            .peek()
+            .map(|token| token.span)
+            .unwrap_or_else(|| Span::new(self.source.len(), self.source.len(), FileId(0)))
+    }
+
+    fn prev_span(&mut self) -> Span {
+        self.lexer
+            .peek()
+            .map(|token| token.span)
+            .unwrap_or_else(|| Span::new(self.source.len(), self.source.len(), FileId(0)))
     }
 }
 
@@ -196,7 +395,19 @@ mod tests {
 
         fn write_type(&mut self, ty: ast::ty::TypeId, ctx: &AstCtx) {
             match &ctx.get_type(ty).kind {
-                TypeKind::Path(path) => self.write_path(path, ctx),
+                TypeKind::Path { path, generic_args } => {
+                    self.write_path(path, ctx);
+                    if !generic_args.is_empty() {
+                        self.out.push('<');
+                        for (idx, generic_arg) in generic_args.iter().enumerate() {
+                            if idx > 0 {
+                                self.out.push_str(", ");
+                            }
+                            self.write_type(*generic_arg, ctx);
+                        }
+                        self.out.push('>');
+                    }
+                }
             }
         }
 
@@ -287,6 +498,48 @@ mod tests {
             self.write_type(def.ty, ctx);
             self.out.push('\n');
             self.write_expr("  value", def.value, ctx);
+        }
+
+        fn visit_function(&mut self, _item_id: ItemId, def: &ast::item::FunctionDef, ctx: &AstCtx) {
+            let _ = write!(&mut self.out, "fn {}", ctx.get_str(def.name.name));
+            if !def.generic_params.is_empty() {
+                self.out.push('<');
+                for (idx, generic) in def.generic_params.iter().enumerate() {
+                    if idx > 0 {
+                        self.out.push_str(", ");
+                    }
+                    self.out.push_str(ctx.get_str(generic.name));
+                }
+                self.out.push('>');
+            }
+            self.out.push('(');
+            for (idx, param) in def.params.iter().enumerate() {
+                if idx > 0 {
+                    self.out.push_str(", ");
+                }
+                match &param.label {
+                    ast::item::ParamLabel::Implicit => {}
+                    ast::item::ParamLabel::Explicit(label) => {
+                        self.out.push_str(ctx.get_str(label.name));
+                        self.out.push(' ');
+                    }
+                    ast::item::ParamLabel::Suppressed => self.out.push_str("_ "),
+                }
+                self.out.push_str(ctx.get_str(param.name.name));
+                self.out.push_str(": ");
+                self.write_type(param.ty, ctx);
+            }
+            self.out.push(')');
+            if let Some(return_type) = def.return_type {
+                self.out.push_str(" -> ");
+                self.write_type(return_type, ctx);
+            }
+            self.out.push('\n');
+            for stmt in &def.body.stmts {
+                match stmt.kind {
+                    ast::item::StmtKind::Expr(expr) => self.write_expr("  expr", expr, ctx),
+                }
+            }
         }
     }
 
@@ -531,7 +784,8 @@ mod tests {
             panic!("expected const");
         };
         let ty = ctx.get_type(def.ty);
-        let TypeKind::Path(path) = &ty.kind;
+        let TypeKind::Path { path, generic_args } = &ty.kind;
+        assert!(generic_args.is_empty());
         assert_eq!(path.0.len(), 2);
         assert_eq!(ctx.get_str(path.0[0].name), "std");
         assert_eq!(ctx.get_str(path.0[1].name), "Option");
@@ -560,5 +814,107 @@ mod tests {
         let eq = source.find('=').expect("=");
         assert_eq!(err.span.start, eq);
         assert_eq!(err.span.end, eq + 1);
+    }
+
+    #[test]
+    fn parses_empty_function() {
+        let parsed = parse_ok("fn main() {}");
+
+        assert_eq!(parsed.compact_ast(), "fn main()\n");
+    }
+
+    #[test]
+    fn parses_function_params() {
+        let parsed = parse_ok("fn calc(a: usize, x b: i32, _ c: bool,) {}");
+
+        assert_eq!(
+            parsed.compact_ast(),
+            "fn calc(a: usize, x b: i32, _ c: bool)\n"
+        );
+    }
+
+    #[test]
+    fn parses_generic_function_with_return_and_body_expr() {
+        let parsed = parse_ok("fn id<T>(x: T) -> T { x }");
+
+        assert_eq!(
+            parsed.compact_ast(),
+            "fn id<T>(x: T) -> T\n  expr: path x\n"
+        );
+    }
+
+    #[test]
+    fn parses_generic_type_args_in_function_param() {
+        let parsed = parse_ok("fn f<T>(x: Option<T>) {}");
+
+        assert_eq!(parsed.compact_ast(), "fn f<T>(x: Option<T>)\n");
+    }
+
+    #[test]
+    fn parses_multi_expr_function_body() {
+        let parsed = parse_ok("fn f() { 1 2 + 3 }");
+
+        assert_eq!(
+            parsed.compact_ast(),
+            "fn f()\n  expr: int\n  expr: binary Add\n  lhs: int\n  rhs: int\n"
+        );
+    }
+
+    #[test]
+    fn errors_on_function_missing_name() {
+        let err = parse_err("fn");
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::UnexpectedEof {
+                expected: Some(TokenKind::Ident)
+            }
+        ));
+    }
+
+    #[test]
+    fn errors_on_function_missing_paren() {
+        let err = parse_err("fn main {}");
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::Expected {
+                expected: TokenKind::LParen,
+                found: TokenKind::LBrace
+            }
+        ));
+    }
+
+    #[test]
+    fn errors_on_bad_function_param() {
+        let err = parse_err("fn f(1: T) {}");
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::Expected {
+                expected: TokenKind::Ident,
+                found: TokenKind::Integer
+            }
+        ));
+    }
+
+    #[test]
+    fn errors_on_function_missing_close_brace() {
+        let err = parse_err("fn f() { 1");
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::UnexpectedEof {
+                expected: Some(TokenKind::RBrace)
+            }
+        ));
+    }
+
+    #[test]
+    fn errors_on_bad_function_return_type() {
+        let err = parse_err("fn f() -> { }");
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::Expected {
+                expected: TokenKind::Ident,
+                found: TokenKind::LBrace
+            }
+        ));
     }
 }

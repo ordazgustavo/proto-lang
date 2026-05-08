@@ -12,7 +12,10 @@ pub struct Type {
 
 #[derive(Debug)]
 pub enum TypeKind {
-    Path(ModPath),
+    Path {
+        path: ModPath,
+        generic_args: Vec<TypeId>,
+    },
 }
 
 pub type TypeArena = Arena<Type>;

@@ -1,5 +1,4 @@
 use ast::{
-    common::Ident,
     expr::{
         Arg, BinaryExpr, BinaryOp, CallExpr, Expr, ExprId, ExprKind, FieldExpr, Lit, LitKind,
         UnaryExpr, UnaryOp,
@@ -193,7 +192,7 @@ impl<'a> Parser<'a> {
         Ok((args, rparen.span))
     }
 
-    fn parse_arg_label(&mut self) -> Option<Ident> {
+    fn parse_arg_label(&mut self) -> Option<ast::common::Ident> {
         let mut lookahead = self.lexer.clone();
         let ident = lookahead.next()?;
         if ident.kind != TokenKind::Ident {
@@ -226,23 +225,6 @@ impl<'a> Parser<'a> {
             }),
             span: token.span,
         })
-    }
-
-    fn ident_from_token(&mut self, token: &Token) -> Ident {
-        let name = self.ctx.intern_str(&self.source[token.span.range()]);
-        Ident {
-            name,
-            span: token.span,
-        }
-    }
-
-    fn eof_span(&mut self) -> ast::span::Span {
-        self.lexer
-            .peek()
-            .map(|token| token.span)
-            .unwrap_or_else(|| {
-                ast::span::Span::new(self.source.len(), self.source.len(), ast::span::FileId(0))
-            })
     }
 }
 

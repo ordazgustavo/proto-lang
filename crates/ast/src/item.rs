@@ -19,7 +19,7 @@ pub type ItemId = Id<Item>;
 pub enum ItemKind {
     Import(ImportDef),
     Const(ConstDef),
-    // Function,
+    Function(FunctionDef),
     // Struct,
     // Enum,
     // Extend,
@@ -35,4 +35,44 @@ pub struct ConstDef {
     pub name: Ident,
     pub ty: TypeId,
     pub value: ExprId,
+}
+
+#[derive(Debug)]
+pub struct FunctionDef {
+    pub name: Ident,
+    pub generic_params: Vec<Ident>,
+    pub params: Vec<Param>,
+    pub return_type: Option<TypeId>,
+    pub body: Block,
+}
+
+#[derive(Debug)]
+pub struct Param {
+    pub label: ParamLabel,
+    pub name: Ident,
+    pub ty: TypeId,
+}
+
+#[derive(Debug)]
+pub enum ParamLabel {
+    Implicit,
+    Explicit(Ident),
+    Suppressed,
+}
+
+#[derive(Debug)]
+pub struct Block {
+    pub stmts: Vec<Stmt>,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub struct Stmt {
+    pub kind: StmtKind,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub enum StmtKind {
+    Expr(ExprId),
 }

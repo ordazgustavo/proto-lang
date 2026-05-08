@@ -3,7 +3,7 @@ use std::fmt::Write;
 use crate::{
     ctx::AstCtx,
     expr::{ExprId, ExprKind, LitKind},
-    item::{ConstDef, ImportDef, ItemId},
+    item::{ConstDef, FunctionDef, ImportDef, ItemId, ParamLabel, StmtKind},
     ty::TypeKind,
     visit::{AstVisitor, walk_program},
 };
@@ -42,7 +42,7 @@ impl AstVisitor for DebugAstPrinterVisitor {
 
         let ty = ctx.get_type(def.ty);
         match &ty.kind {
-            TypeKind::Path(path) => {
+            TypeKind::Path { path, generic_args } => {
                 let joined = path
                     .0
                     .iter()
@@ -50,14 +50,93 @@ impl AstVisitor for DebugAstPrinterVisitor {
                     .collect::<Vec<_>>()
                     .join("::");
                 let _ = writeln!(&mut self.out, "  type: Path {} [{:?}]", joined, ty.span);
+                for generic_arg in generic_args {
+                    self.write_type("    generic", *generic_arg, ctx);
+                }
             }
         }
 
         self.write_expr("  value", def.value, ctx);
     }
+
+    fn visit_function(&mut self, item_id: ItemId, def: &FunctionDef, ctx: &AstCtx) {
+        let item = ctx.get_item(item_id);
+        let _ = writeln!(
+            &mut self.out,
+            "fn {} [{:?}]",
+            ctx.get_str(def.name.name),
+            item.span
+        );
+        for generic in &def.generic_params {
+            let _ = writeln!(&mut self.out, "  generic: {}", ctx.get_str(generic.name));
+        }
+        for param in &def.params {
+            match &param.label {
+                ParamLabel::Implicit => {
+                    let _ = write!(&mut self.out, "  param {}", ctx.get_str(param.name.name));
+                }
+                ParamLabel::Explicit(label) => {
+                    let _ = write!(
+                        &mut self.out,
+                        "  param {} {}",
+                        ctx.get_str(label.name),
+                        ctx.get_str(param.name.name)
+                    );
+                }
+                ParamLabel::Suppressed => {
+                    let _ = write!(&mut self.out, "  param _ {}", ctx.get_str(param.name.name));
+                }
+            }
+            self.out.push_str(": ");
+            self.write_type_inline(param.ty, ctx);
+            self.out.push('\n');
+        }
+        if let Some(return_type) = def.return_type {
+            self.out.push_str("  return: ");
+            self.write_type_inline(return_type, ctx);
+            self.out.push('\n');
+        }
+        let _ = writeln!(&mut self.out, "  block [{:?}]", def.body.span);
+        for stmt in &def.body.stmts {
+            match stmt.kind {
+                StmtKind::Expr(expr) => self.write_expr("    expr", expr, ctx),
+            }
+        }
+    }
 }
 
 impl DebugAstPrinterVisitor {
+    fn write_type(&mut self, label: &str, ty_id: crate::ty::TypeId, ctx: &AstCtx) {
+        self.out.push_str(label);
+        self.out.push_str(": ");
+        self.write_type_inline(ty_id, ctx);
+        self.out.push('\n');
+    }
+
+    fn write_type_inline(&mut self, ty_id: crate::ty::TypeId, ctx: &AstCtx) {
+        let ty = ctx.get_type(ty_id);
+        match &ty.kind {
+            TypeKind::Path { path, generic_args } => {
+                for (idx, ident) in path.0.iter().enumerate() {
+                    if idx > 0 {
+                        self.out.push_str("::");
+                    }
+                    self.out.push_str(ctx.get_str(ident.name));
+                }
+                if !generic_args.is_empty() {
+                    self.out.push('<');
+                    for (idx, generic_arg) in generic_args.iter().enumerate() {
+                        if idx > 0 {
+                            self.out.push_str(", ");
+                        }
+                        self.write_type_inline(*generic_arg, ctx);
+                    }
+                    self.out.push('>');
+                }
+            }
+        }
+    }
+
     fn write_expr(&mut self, label: &str, expr_id: ExprId, ctx: &AstCtx) {
         let expr = ctx.get_expr(expr_id);
         match &expr.kind {

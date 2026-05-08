@@ -5,7 +5,8 @@ fn main() {
     let source = r#"import std::Option
         import std::Result
         const PI: f32 = 3.14
-        const NONE: std::Option = None"#;
+        const NONE: std::Option = None
+        fn add(a: int, b: int) -> int {a + b}"#;
     let mut ctx = AstCtx::new();
     let file = FileId(0);
     let mut parser = Parser::new(&mut ctx, source, file);
