@@ -4,8 +4,8 @@ use ast::{
 };
 
 use crate::ids::{
-    BodyId, ExprId, FieldId, GenericParamId, ImportId, ItemId, LocalId, ParamId, ScopeId, TypeId,
-    VariantId,
+    BodyId, DefId, ExprId, FieldId, GenericParamId, ImportId, ItemId, LocalId, ParamId, ScopeId,
+    TypeId, VariantId,
 };
 
 #[derive(Debug)]
@@ -27,6 +27,7 @@ pub struct Import {
 #[derive(Debug)]
 pub struct Item {
     pub kind: ItemKind,
+    pub def: Option<DefId>,
     pub span: Span,
 }
 
@@ -89,25 +90,32 @@ pub struct Extend {
 
 #[derive(Debug)]
 pub struct GenericParam {
+    pub def: DefId,
     pub name: Ident,
+    pub span: Span,
 }
 
 #[derive(Debug)]
 pub struct Param {
+    pub def: DefId,
     pub label: ParamLabel,
     pub name: Ident,
     pub ty: TypeId,
+    pub span: Span,
 }
 
 #[derive(Debug)]
 pub struct Field {
+    pub def: DefId,
     pub label: ParamLabel,
     pub name: Ident,
     pub ty: TypeId,
+    pub span: Span,
 }
 
 #[derive(Debug)]
 pub struct Variant {
+    pub def: DefId,
     pub name: Ident,
     pub payload: Vec<TypeId>,
     pub span: Span,
@@ -171,6 +179,7 @@ pub enum AssignTarget {
 
 #[derive(Debug)]
 pub struct Local {
+    pub def: DefId,
     pub binding: BindingKind,
     pub name: Ident,
     pub ty: Option<TypeId>,

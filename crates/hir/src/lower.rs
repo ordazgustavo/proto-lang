@@ -8,6 +8,7 @@ use ast::{
 
 use crate::{
     ctx::HirCtx,
+    def::{Def, DefKind},
     diagnostic::{HirDiagnostic, HirDiagnosticKind},
     expr::*,
     ids::*,
@@ -27,13 +28,8 @@ pub struct HirLowerOutput {
     pub diagnostics: Vec<HirDiagnostic>,
 }
 
-pub fn lower_program(
-    ast_items: &[ast_item::ItemId],
-    ast: &AstCtx,
-    file: FileId,
-) -> (HirCtx, ModuleId) {
-    let output = HirLowerer::new(ast).lower_module(ast_items, ModuleSource { file });
-    (output.hir, output.module)
+pub fn lower_program(ast_items: &[ast_item::ItemId], ast: &AstCtx, file: FileId) -> HirLowerOutput {
+    HirLowerer::new(ast).lower_module(ast_items, ModuleSource { file })
 }
 
 pub struct HirLowerer<'a> {
@@ -118,6 +114,31 @@ impl<'a> HirLowerer<'a> {
     }
 
     fn lower_item(&mut self, item: &ast_item::Item) -> ItemId {
+        if let ast_item::ItemKind::Extend(def) = &item.kind {
+            let item_id = self.hir.next_item_id();
+            let generic_params = self.lower_generic_params(&def.generic_params, Some(item_id));
+            let id = self.hir.alloc_item(Item {
+                kind: ItemKind::Extend(Extend {
+                    target: def.target,
+                    generic_params,
+                    methods: Vec::new(),
+                }),
+                def: None,
+                span: item.span,
+            });
+            let mut methods = Vec::new();
+            let mut names = NameSet::new();
+            for method in &def.methods {
+                names.insert(method.name, duplicate_method, &mut self.diagnostics);
+                methods.push(self.lower_method(def.target, method, id, item.span));
+            }
+            if let ItemKind::Extend(def) = &mut self.hir.item_mut(id).kind {
+                def.methods = methods;
+            }
+            return id;
+        }
+
+        let item_id = self.hir.next_item_id();
         let kind = match &item.kind {
             ast_item::ItemKind::Import(_) => unreachable!("imports are module-level"),
             ast_item::ItemKind::Const(def) => ItemKind::Const(Const {
@@ -128,39 +149,38 @@ impl<'a> HirLowerer<'a> {
             ast_item::ItemKind::Function(def) => ItemKind::Function(self.lower_function(def)),
             ast_item::ItemKind::Struct(def) => ItemKind::Struct(Struct {
                 name: def.name,
-                generic_params: self.lower_generic_params(&def.generic_params),
-                fields: self.lower_fields(&def.fields),
+                generic_params: self.lower_generic_params(&def.generic_params, Some(item_id)),
+                fields: self.lower_fields(&def.fields, item_id),
             }),
             ast_item::ItemKind::Enum(def) => ItemKind::Enum(Enum {
                 name: def.name,
-                generic_params: self.lower_generic_params(&def.generic_params),
-                variants: self.lower_variants(&def.variants),
+                generic_params: self.lower_generic_params(&def.generic_params, Some(item_id)),
+                variants: self.lower_variants(&def.variants, item_id),
             }),
-            ast_item::ItemKind::Extend(def) => {
-                let generic_params = self.lower_generic_params(&def.generic_params);
-                let mut methods = Vec::new();
-                let mut names = NameSet::new();
-                for method in &def.methods {
-                    names.insert(method.name, duplicate_method, &mut self.diagnostics);
-                    methods.push(self.lower_method(def.target, method, item.span));
-                }
-                ItemKind::Extend(Extend {
-                    target: def.target,
-                    generic_params,
-                    methods,
-                })
-            }
+            ast_item::ItemKind::Extend(_) => unreachable!("extends handled early"),
         };
+        let def = item_def_kind(&kind, item_id).map(|def_kind| {
+            let name = item_name(&kind);
+            self.hir.alloc_def(Def {
+                kind: def_kind,
+                name,
+                span: name.span,
+                parent_scope: None,
+                parent_item: None,
+            })
+        });
         self.hir.alloc_item(Item {
             kind,
+            def,
             span: item.span,
         })
     }
 
     fn lower_function(&mut self, def: &ast_item::FunctionDef) -> Function {
-        let generic_params = self.lower_generic_params(&def.generic_params);
+        let item = self.hir.next_item_id();
+        let generic_params = self.lower_generic_params(&def.generic_params, Some(item));
         let scope = self.push_scope(None);
-        let params = self.lower_params(&def.params, scope);
+        let params = self.lower_params(&def.params, scope, Some(item));
         let body = self.lower_block_with_scope(&def.body, scope);
         self.pop_scope();
         Function {
@@ -172,48 +192,95 @@ impl<'a> HirLowerer<'a> {
         }
     }
 
-    fn lower_method(&mut self, target: Ident, def: &ast_item::FunctionDef, span: Span) -> ItemId {
-        let generic_params = self.lower_generic_params(&def.generic_params);
+    fn lower_method(
+        &mut self,
+        target: Ident,
+        def: &ast_item::FunctionDef,
+        parent_item: ItemId,
+        span: Span,
+    ) -> ItemId {
+        let item = self.hir.next_item_id();
+        let generic_params = self.lower_generic_params(&def.generic_params, Some(item));
         let scope = self.push_scope(None);
-        let params = self.lower_params(&def.params, scope);
+        let params = self.lower_params(&def.params, scope, Some(item));
         let body = self.lower_block_with_scope(&def.body, scope);
         self.pop_scope();
         let return_type = def.return_type.map(|ty| self.lower_type(ty));
+        let kind = ItemKind::Method(Method {
+            target,
+            name: def.name,
+            generic_params,
+            params,
+            return_type,
+            body,
+        });
+        let hir_def = self.hir.alloc_def(Def {
+            kind: DefKind::Method(item),
+            name: def.name,
+            span: def.name.span,
+            parent_scope: None,
+            parent_item: Some(parent_item),
+        });
         self.hir.alloc_item(Item {
-            kind: ItemKind::Method(Method {
-                target,
-                name: def.name,
-                generic_params,
-                params,
-                return_type,
-                body,
-            }),
+            kind,
+            def: Some(hir_def),
             span,
         })
     }
 
-    fn lower_generic_params(&mut self, params: &[Ident]) -> Vec<GenericParamId> {
+    fn lower_generic_params(
+        &mut self,
+        params: &[Ident],
+        parent_item: Option<ItemId>,
+    ) -> Vec<GenericParamId> {
         let mut names = NameSet::new();
         params
             .iter()
             .map(|param| {
                 names.insert(*param, duplicate_generic_param, &mut self.diagnostics);
-                self.hir.alloc_generic_param(GenericParam { name: *param })
+                let id = self.hir.next_generic_param_id();
+                let def = self.hir.alloc_def(Def {
+                    kind: DefKind::Generic(id),
+                    name: *param,
+                    span: param.span,
+                    parent_scope: None,
+                    parent_item,
+                });
+                self.hir.alloc_generic_param(GenericParam {
+                    def,
+                    name: *param,
+                    span: param.span,
+                })
             })
             .collect()
     }
 
-    fn lower_params(&mut self, params: &[ast_item::Param], scope: ScopeId) -> Vec<ParamId> {
+    fn lower_params(
+        &mut self,
+        params: &[ast_item::Param],
+        scope: ScopeId,
+        parent_item: Option<ItemId>,
+    ) -> Vec<ParamId> {
         let mut names = NameSet::new();
         params
             .iter()
             .map(|param| {
                 names.insert(param.name, duplicate_param, &mut self.diagnostics);
                 let ty = self.lower_type(param.ty);
+                let id = self.hir.next_param_id();
+                let def = self.hir.alloc_def(Def {
+                    kind: DefKind::Param(id),
+                    name: param.name,
+                    span: param.name.span,
+                    parent_scope: Some(scope),
+                    parent_item,
+                });
                 let id = self.hir.alloc_param(Param {
+                    def,
                     label: lower_param_label(&param.label),
                     name: param.name,
                     ty,
+                    span: param.name.span,
                 });
                 self.hir.scope_mut(scope).params.push(id);
                 id
@@ -221,23 +288,37 @@ impl<'a> HirLowerer<'a> {
             .collect()
     }
 
-    fn lower_fields(&mut self, fields: &[ast_item::Param]) -> Vec<FieldId> {
+    fn lower_fields(&mut self, fields: &[ast_item::Param], parent_item: ItemId) -> Vec<FieldId> {
         let mut names = NameSet::new();
         fields
             .iter()
             .map(|field| {
                 names.insert(field.name, duplicate_field, &mut self.diagnostics);
                 let ty = self.lower_type(field.ty);
+                let id = self.hir.next_field_id();
+                let def = self.hir.alloc_def(Def {
+                    kind: DefKind::Field(id),
+                    name: field.name,
+                    span: field.name.span,
+                    parent_scope: None,
+                    parent_item: Some(parent_item),
+                });
                 self.hir.alloc_field(Field {
+                    def,
                     label: lower_param_label(&field.label),
                     name: field.name,
                     ty,
+                    span: field.name.span,
                 })
             })
             .collect()
     }
 
-    fn lower_variants(&mut self, variants: &[ast_item::EnumVariant]) -> Vec<VariantId> {
+    fn lower_variants(
+        &mut self,
+        variants: &[ast_item::EnumVariant],
+        parent_item: ItemId,
+    ) -> Vec<VariantId> {
         let mut names = NameSet::new();
         variants
             .iter()
@@ -248,7 +329,16 @@ impl<'a> HirLowerer<'a> {
                     .iter()
                     .map(|ty| self.lower_type(*ty))
                     .collect();
+                let id = self.hir.next_variant_id();
+                let def = self.hir.alloc_def(Def {
+                    kind: DefKind::Variant(id),
+                    name: variant.name,
+                    span: variant.name.span,
+                    parent_scope: None,
+                    parent_item: Some(parent_item),
+                });
                 self.hir.alloc_variant(Variant {
+                    def,
                     name: variant.name,
                     payload,
                     span: variant.name.span,
@@ -355,7 +445,16 @@ impl<'a> HirLowerer<'a> {
                 break;
             }
         }
+        let id = self.hir.next_local_id();
+        let def = self.hir.alloc_def(Def {
+            kind: DefKind::Local(id),
+            name,
+            span,
+            parent_scope: Some(scope),
+            parent_item: None,
+        });
         let id = self.hir.alloc_local(Local {
+            def,
             binding,
             name,
             ty,
@@ -577,5 +676,27 @@ fn lower_binary_op(op: &ast_expr::BinaryOp) -> BinaryOp {
         ast_expr::BinaryOp::GtEq => BinaryOp::GtEq,
         ast_expr::BinaryOp::Eq => BinaryOp::Eq,
         ast_expr::BinaryOp::NotEq => BinaryOp::NotEq,
+    }
+}
+
+fn item_def_kind(kind: &ItemKind, id: ItemId) -> Option<DefKind> {
+    match kind {
+        ItemKind::Const(_) => Some(DefKind::Const(id)),
+        ItemKind::Function(_) => Some(DefKind::Function(id)),
+        ItemKind::Method(_) => Some(DefKind::Method(id)),
+        ItemKind::Struct(_) => Some(DefKind::Struct(id)),
+        ItemKind::Enum(_) => Some(DefKind::Enum(id)),
+        ItemKind::Extend(_) => None,
+    }
+}
+
+fn item_name(kind: &ItemKind) -> Ident {
+    match kind {
+        ItemKind::Const(def) => def.name,
+        ItemKind::Function(def) => def.name,
+        ItemKind::Method(def) => def.name,
+        ItemKind::Struct(def) => def.name,
+        ItemKind::Enum(def) => def.name,
+        ItemKind::Extend(def) => def.target,
     }
 }

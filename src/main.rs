@@ -15,9 +15,15 @@ fn main() {
     let file = FileId(0);
     let mut parser = Parser::new(&mut ctx, source, file);
     let program = parser.parse_program().expect("bad program");
-    let (hir, module) = lower_program(&program, &ctx, file);
+    let output = lower_program(&program, &ctx, file);
     println!("== AST ==");
     print!("{}", format_program_ast(&program, &ctx));
     println!("== HIR ==");
-    print!("{}", format_hir_module(module, &hir, &ctx));
+    print!("{}", format_hir_module(output.module, &output.hir, &ctx));
+    if !output.diagnostics.is_empty() {
+        println!("== HIR diagnostics ==");
+        for diagnostic in output.diagnostics {
+            println!("{:?}", diagnostic.kind);
+        }
+    }
 }

@@ -22,3 +22,5 @@ pub struct VariantId(pub(crate) usize);
 pub struct GenericParamId(pub(crate) usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ScopeId(pub(crate) usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DefId(pub(crate) usize);

@@ -1,7 +1,10 @@
 use crate::{
+    def::Def,
     expr::Expr,
     ids::*,
-    item::{Body, Field, GenericParam, Import, Item, Local, Module, Param, Scope, Variant},
+    item::{
+        Body, Field, GenericParam, Import, Item, ItemKind, Local, Module, Param, Scope, Variant,
+    },
     ty::Type,
 };
 
@@ -19,6 +22,7 @@ pub struct HirCtx {
     variants: Vec<Variant>,
     generic_params: Vec<GenericParam>,
     scopes: Vec<Scope>,
+    defs: Vec<Def>,
 }
 
 impl HirCtx {
@@ -36,6 +40,7 @@ impl HirCtx {
             variants: Vec::new(),
             generic_params: Vec::new(),
             scopes: Vec::new(),
+            defs: Vec::new(),
         }
     }
 
@@ -75,6 +80,61 @@ impl HirCtx {
     pub fn scope(&self, id: ScopeId) -> &Scope {
         &self.scopes[id.0]
     }
+    pub fn def(&self, id: DefId) -> &Def {
+        &self.defs[id.0]
+    }
+    pub fn module_value_items(&self, id: ModuleId) -> &[ItemId] {
+        &self.module(id).value_items
+    }
+    pub fn module_type_items(&self, id: ModuleId) -> &[ItemId] {
+        &self.module(id).type_items
+    }
+    pub fn scope_parent(&self, id: ScopeId) -> Option<ScopeId> {
+        self.scope(id).parent
+    }
+    pub fn scope_params(&self, id: ScopeId) -> &[ParamId] {
+        &self.scope(id).params
+    }
+    pub fn scope_locals(&self, id: ScopeId) -> &[LocalId] {
+        &self.scope(id).locals
+    }
+    pub fn item_def(&self, id: ItemId) -> Option<DefId> {
+        self.item(id).def
+    }
+    pub fn item_name(&self, id: ItemId) -> Option<ast::common::Ident> {
+        match &self.item(id).kind {
+            ItemKind::Const(def) => Some(def.name),
+            ItemKind::Function(def) => Some(def.name),
+            ItemKind::Method(def) => Some(def.name),
+            ItemKind::Struct(def) => Some(def.name),
+            ItemKind::Enum(def) => Some(def.name),
+            ItemKind::Extend(_) => None,
+        }
+    }
+    pub fn item_path(&self, id: ItemId) -> Vec<ast::common::Ident> {
+        match &self.item(id).kind {
+            ItemKind::Method(def) => vec![def.target, def.name],
+            _ => self.item_name(id).into_iter().collect(),
+        }
+    }
+    pub fn struct_fields(&self, id: ItemId) -> &[FieldId] {
+        match &self.item(id).kind {
+            ItemKind::Struct(def) => &def.fields,
+            _ => &[],
+        }
+    }
+    pub fn enum_variants(&self, id: ItemId) -> &[VariantId] {
+        match &self.item(id).kind {
+            ItemKind::Enum(def) => &def.variants,
+            _ => &[],
+        }
+    }
+    pub fn extend_methods(&self, id: ItemId) -> &[ItemId] {
+        match &self.item(id).kind {
+            ItemKind::Extend(def) => &def.methods,
+            _ => &[],
+        }
+    }
 
     pub(crate) fn alloc_module(&mut self, val: Module) -> ModuleId {
         let id = ModuleId(self.modules.len());
@@ -90,6 +150,9 @@ impl HirCtx {
         let id = ItemId(self.items.len());
         self.items.push(val);
         id
+    }
+    pub(crate) fn item_mut(&mut self, id: ItemId) -> &mut Item {
+        &mut self.items[id.0]
     }
     pub(crate) fn alloc_body(&mut self, val: Body) -> BodyId {
         let id = BodyId(self.bodies.len());
@@ -135,6 +198,29 @@ impl HirCtx {
         let id = ScopeId(self.scopes.len());
         self.scopes.push(val);
         id
+    }
+    pub(crate) fn alloc_def(&mut self, val: Def) -> DefId {
+        let id = DefId(self.defs.len());
+        self.defs.push(val);
+        id
+    }
+    pub(crate) fn next_item_id(&self) -> ItemId {
+        ItemId(self.items.len())
+    }
+    pub(crate) fn next_local_id(&self) -> LocalId {
+        LocalId(self.locals.len())
+    }
+    pub(crate) fn next_param_id(&self) -> ParamId {
+        ParamId(self.params.len())
+    }
+    pub(crate) fn next_field_id(&self) -> FieldId {
+        FieldId(self.fields.len())
+    }
+    pub(crate) fn next_variant_id(&self) -> VariantId {
+        VariantId(self.variants.len())
+    }
+    pub(crate) fn next_generic_param_id(&self) -> GenericParamId {
+        GenericParamId(self.generic_params.len())
     }
     pub(crate) fn scope_mut(&mut self, id: ScopeId) -> &mut Scope {
         &mut self.scopes[id.0]
