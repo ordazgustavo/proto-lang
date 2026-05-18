@@ -1,4 +1,5 @@
 use ast::{ctx::AstCtx, span::FileId};
+use hir::{format_hir_module, lower_program};
 use parser::{Parser, format_program_ast};
 
 fn main() {
@@ -14,5 +15,9 @@ fn main() {
     let file = FileId(0);
     let mut parser = Parser::new(&mut ctx, source, file);
     let program = parser.parse_program().expect("bad program");
+    let (hir, module) = lower_program(&program, &ctx, file);
+    println!("== AST ==");
     print!("{}", format_program_ast(&program, &ctx));
+    println!("== HIR ==");
+    print!("{}", format_hir_module(module, &hir, &ctx));
 }
