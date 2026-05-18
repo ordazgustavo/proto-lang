@@ -94,9 +94,10 @@ field_access = { (self_keyword | ident) ~ ("." ~ ident)+ }
 self_keyword = { "self" }
 
 // Primary expressions
-primary = _{ function_call | literal | self_keyword | expr_path | "(" ~ expr ~ ")" }
+primary = _{ array | function_call | literal | self_keyword | expr_path | "(" ~ expr ~ ")" }
 implicit_member = { "." ~ ident }
 expr_path = { ident ~ ("::" ~ ident)* }
+array = { "[" ~ (expr ~ ("," ~ expr)* ~ ","?)? ~ "]" }
 
 // Function call (standalone, not method): name(args)
 function_call = { ident ~ turbofish? ~ "(" ~ args? ~ ")" }

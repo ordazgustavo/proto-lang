@@ -22,7 +22,7 @@ pub enum ItemKind {
     Function(FunctionDef),
     Struct(StructDef),
     Enum(EnumDef),
-    // Extend,
+    Extend(ExtendDef),
 }
 
 #[derive(Debug)]
@@ -67,6 +67,13 @@ pub struct EnumVariant {
 }
 
 #[derive(Debug)]
+pub struct ExtendDef {
+    pub target: Ident,
+    pub generic_params: Vec<Ident>,
+    pub methods: Vec<FunctionDef>,
+}
+
+#[derive(Debug)]
 pub struct Param {
     pub label: ParamLabel,
     pub name: Ident,
@@ -95,4 +102,47 @@ pub struct Stmt {
 #[derive(Debug)]
 pub enum StmtKind {
     Expr(ExprId),
+    Assignment(AssignmentStmt),
+    If(IfStmt),
+    ForIn(ForInStmt),
+}
+
+#[derive(Debug)]
+pub struct AssignmentStmt {
+    pub binding: Option<BindingKind>,
+    pub target: AssignTarget,
+    pub ty: Option<TypeId>,
+    pub value: ExprId,
+}
+
+#[derive(Debug)]
+pub enum BindingKind {
+    Let,
+    Var,
+}
+
+#[derive(Debug)]
+pub enum AssignTarget {
+    Ident(Ident),
+    Field { base: Ident, fields: Vec<Ident> },
+}
+
+#[derive(Debug)]
+pub struct IfStmt {
+    pub condition: ExprId,
+    pub then_block: Block,
+    pub else_branch: Option<ElseBranch>,
+}
+
+#[derive(Debug)]
+pub enum ElseBranch {
+    If(Box<IfStmt>),
+    Block(Block),
+}
+
+#[derive(Debug)]
+pub struct ForInStmt {
+    pub binding: Ident,
+    pub iter: ExprId,
+    pub body: Block,
 }

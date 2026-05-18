@@ -2,9 +2,10 @@ use std::fmt::Write;
 
 use crate::{
     ctx::AstCtx,
-    expr::{ExprId, ExprKind, LitKind},
+    expr::{ExprId, ExprKind, IfElseBranch, LitKind},
     item::{
-        ConstDef, EnumDef, FunctionDef, ImportDef, ItemId, Param, ParamLabel, StmtKind, StructDef,
+        AssignTarget, ConstDef, ElseBranch, EnumDef, ExtendDef, FunctionDef, ImportDef, ItemId,
+        Param, ParamLabel, Stmt, StmtKind, StructDef,
     },
     ty::TypeKind,
     visit::{AstVisitor, walk_program},
@@ -100,9 +101,7 @@ impl AstVisitor for DebugAstPrinterVisitor {
         }
         let _ = writeln!(&mut self.out, "  block [{:?}]", def.body.span);
         for stmt in &def.body.stmts {
-            match stmt.kind {
-                StmtKind::Expr(expr) => self.write_expr("    expr", expr, ctx),
-            }
+            self.write_stmt("    stmt", stmt, ctx);
         }
     }
 
@@ -150,6 +149,22 @@ impl AstVisitor for DebugAstPrinterVisitor {
                 self.out.push(')');
             }
             self.out.push('\n');
+        }
+    }
+
+    fn visit_extend(&mut self, item_id: ItemId, def: &ExtendDef, ctx: &AstCtx) {
+        let item = ctx.get_item(item_id);
+        let _ = writeln!(
+            &mut self.out,
+            "extend {} [{:?}]",
+            ctx.get_str(def.target.name),
+            item.span
+        );
+        for generic in &def.generic_params {
+            let _ = writeln!(&mut self.out, "  generic: {}", ctx.get_str(generic.name));
+        }
+        for method in &def.methods {
+            let _ = writeln!(&mut self.out, "  method {}", ctx.get_str(method.name.name));
         }
     }
 }
@@ -283,6 +298,89 @@ impl DebugAstPrinterVisitor {
                     expr.span
                 );
                 self.write_expr("    base", field.base, ctx);
+            }
+            ExprKind::Array(array) => {
+                let _ = writeln!(&mut self.out, "{}: Array [{:?}]", label, expr.span);
+                for element in &array.elements {
+                    self.write_expr("    elem", *element, ctx);
+                }
+            }
+            ExprKind::If(if_expr) => {
+                let _ = writeln!(&mut self.out, "{}: If [{:?}]", label, expr.span);
+                self.write_expr("    cond", if_expr.condition, ctx);
+                for stmt in &if_expr.then_block.stmts {
+                    self.write_stmt("    then", stmt, ctx);
+                }
+                match &if_expr.else_branch {
+                    IfElseBranch::If(expr) => self.write_expr("    else", *expr, ctx),
+                    IfElseBranch::Block(block) => {
+                        for stmt in &block.stmts {
+                            self.write_stmt("    else", stmt, ctx);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn write_stmt(&mut self, label: &str, stmt: &Stmt, ctx: &AstCtx) {
+        match &stmt.kind {
+            StmtKind::Expr(expr) => self.write_expr(label, *expr, ctx),
+            StmtKind::Assignment(assign) => {
+                let binding = match assign.binding {
+                    Some(crate::item::BindingKind::Let) => "let ",
+                    Some(crate::item::BindingKind::Var) => "var ",
+                    None => "",
+                };
+                let _ = write!(&mut self.out, "{label}: Assign {binding}");
+                match &assign.target {
+                    AssignTarget::Ident(ident) => {
+                        let _ = write!(&mut self.out, "{}", ctx.get_str(ident.name));
+                    }
+                    AssignTarget::Field { base, fields } => {
+                        let _ = write!(&mut self.out, "{}", ctx.get_str(base.name));
+                        for field in fields {
+                            let _ = write!(&mut self.out, ".{}", ctx.get_str(field.name));
+                        }
+                    }
+                }
+                if let Some(ty) = assign.ty {
+                    self.out.push_str(": ");
+                    self.write_type_inline(ty, ctx);
+                }
+                let _ = writeln!(&mut self.out, " [{:?}]", stmt.span);
+                self.write_expr("    value", assign.value, ctx);
+            }
+            StmtKind::If(if_stmt) => {
+                let _ = writeln!(&mut self.out, "{label}: If [{:?}]", stmt.span);
+                self.write_expr("    cond", if_stmt.condition, ctx);
+                for stmt in &if_stmt.then_block.stmts {
+                    self.write_stmt("    then", stmt, ctx);
+                }
+                match &if_stmt.else_branch {
+                    Some(ElseBranch::If(else_if)) => {
+                        let _ = writeln!(&mut self.out, "    else-if");
+                        self.write_expr("      cond", else_if.condition, ctx);
+                    }
+                    Some(ElseBranch::Block(block)) => {
+                        for stmt in &block.stmts {
+                            self.write_stmt("    else", stmt, ctx);
+                        }
+                    }
+                    None => {}
+                }
+            }
+            StmtKind::ForIn(for_in) => {
+                let _ = writeln!(
+                    &mut self.out,
+                    "{label}: For {} [{:?}]",
+                    ctx.get_str(for_in.binding.name),
+                    stmt.span
+                );
+                self.write_expr("    iter", for_in.iter, ctx);
+                for stmt in &for_in.body.stmts {
+                    self.write_stmt("    body", stmt, ctx);
+                }
             }
         }
     }

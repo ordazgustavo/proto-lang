@@ -1,8 +1,8 @@
 use ast::{
     common::ModPath,
     expr::{
-        Arg, BinaryExpr, BinaryOp, CallExpr, Expr, ExprId, ExprKind, FieldExpr, Lit, LitKind,
-        UnaryExpr, UnaryOp,
+        Arg, ArrayExpr, BinaryExpr, BinaryOp, CallExpr, Expr, ExprId, ExprKind, FieldExpr,
+        IfElseBranch, IfExpr, Lit, LitKind, UnaryExpr, UnaryOp,
     },
     ty::TypeId,
 };
@@ -73,6 +73,8 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::RParen, self.ctx.get_expr(expr).span)?;
                 Ok(expr)
             }
+            TokenKind::LBracket => self.parse_array_expr(token),
+            TokenKind::KwIf => self.parse_if_expr(token),
             TokenKind::Ident | TokenKind::KwSelf => {
                 let token_span = token.span;
                 let path = self.parse_path_expr(token)?;
@@ -229,6 +231,71 @@ impl<'a> Parser<'a> {
             .unwrap_or(lparen_span);
         let rparen = self.expect(TokenKind::RParen, prev)?;
         Ok((args, rparen.span))
+    }
+
+    fn parse_array_expr(&mut self, lbracket: Token) -> PResult<ExprId> {
+        let mut elements = Vec::new();
+        if let Some(rbracket) = self
+            .lexer
+            .next_if(|token| token.kind == TokenKind::RBracket)
+        {
+            return Ok(self.ctx.alloc_expr(Expr {
+                kind: ExprKind::Array(ArrayExpr { elements }),
+                span: lbracket.span.merge(rbracket.span),
+            }));
+        }
+
+        loop {
+            elements.push(self.parse_expr()?);
+            if self
+                .lexer
+                .next_if(|token| token.kind == TokenKind::Comma)
+                .is_none()
+            {
+                break;
+            }
+            if self
+                .lexer
+                .peek()
+                .is_some_and(|token| matches!(token.kind, TokenKind::RBracket | TokenKind::Eof))
+            {
+                break;
+            }
+        }
+
+        let prev = elements
+            .last()
+            .map_or(lbracket.span, |expr| self.ctx.get_expr(*expr).span);
+        let rbracket = self.expect(TokenKind::RBracket, prev)?;
+        Ok(self.ctx.alloc_expr(Expr {
+            kind: ExprKind::Array(ArrayExpr { elements }),
+            span: lbracket.span.merge(rbracket.span),
+        }))
+    }
+
+    fn parse_if_expr(&mut self, if_token: Token) -> PResult<ExprId> {
+        let condition = self.parse_expr()?;
+        let condition_span = self.ctx.get_expr(condition).span;
+        let then_block = self.parse_block(condition_span)?;
+        self.expect(TokenKind::KwElse, then_block.span)?;
+        let else_branch =
+            if let Some(else_if) = self.lexer.next_if(|token| token.kind == TokenKind::KwIf) {
+                IfElseBranch::If(self.parse_if_expr(else_if)?)
+            } else {
+                IfElseBranch::Block(self.parse_block(then_block.span)?)
+            };
+        let end_span = match &else_branch {
+            IfElseBranch::If(expr) => self.ctx.get_expr(*expr).span,
+            IfElseBranch::Block(block) => block.span,
+        };
+        Ok(self.ctx.alloc_expr(Expr {
+            kind: ExprKind::If(IfExpr {
+                condition,
+                then_block,
+                else_branch,
+            }),
+            span: if_token.span.merge(end_span),
+        }))
     }
 
     fn parse_arg_label(&mut self) -> Option<ast::common::Ident> {

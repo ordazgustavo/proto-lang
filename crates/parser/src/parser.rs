@@ -4,7 +4,8 @@ use ast::{
     common::{Ident, ModPath},
     ctx::AstCtx,
     item::{
-        Block, ConstDef, EnumDef, EnumVariant, FunctionDef, ImportDef, Item, ItemId, ItemKind,
+        AssignTarget, AssignmentStmt, BindingKind, Block, ConstDef, ElseBranch, EnumDef,
+        EnumVariant, ExtendDef, ForInStmt, FunctionDef, IfStmt, ImportDef, Item, ItemId, ItemKind,
         Param, ParamLabel, Stmt, StmtKind, StructDef,
     },
     span::{FileId, Span},
@@ -51,6 +52,7 @@ impl<'a> Parser<'a> {
             TokenKind::KwFn => self.parse_function_def(token.span),
             TokenKind::KwStruct => self.parse_struct_def(token.span),
             TokenKind::KwEnum => self.parse_enum_def(token.span),
+            TokenKind::KwExtend => self.parse_extend_def(token.span),
             _ => Err(ParseError::expected_item(token.kind, token.span)),
         }
     }
@@ -143,11 +145,24 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_function_def(&mut self, fn_span: Span) -> PResult<ItemId> {
+        let def = self.parse_function_def_inner(fn_span, false)?;
+        let item_span = fn_span.merge(def.body.span);
+        Ok(self.ctx.alloc_item(Item {
+            kind: ItemKind::Function(def),
+            span: item_span,
+        }))
+    }
+
+    fn parse_function_def_inner(
+        &mut self,
+        fn_span: Span,
+        allow_self_param: bool,
+    ) -> PResult<FunctionDef> {
         let name_tok = self.expect(TokenKind::Ident, fn_span)?;
         let name = self.ident_from_token(&name_tok);
         let generic_params = self.parse_generic_params()?;
         let lparen = self.expect(TokenKind::LParen, name.span)?;
-        let (params, _) = self.parse_params(lparen.span)?;
+        let (params, _) = self.parse_params(lparen.span, allow_self_param)?;
         let return_type = if self
             .lexer
             .next_if(|token| token.kind == TokenKind::Arrow)
@@ -160,18 +175,13 @@ impl<'a> Parser<'a> {
         };
         let body =
             self.parse_block(return_type.map_or(name.span, |ty| self.ctx.get_type(ty).span))?;
-        let item_span = fn_span.merge(body.span);
-        let def = FunctionDef {
+        Ok(FunctionDef {
             name,
             generic_params,
             params,
             return_type,
             body,
-        };
-        Ok(self.ctx.alloc_item(Item {
-            kind: ItemKind::Function(def),
-            span: item_span,
-        }))
+        })
     }
 
     fn parse_struct_def(&mut self, struct_span: Span) -> PResult<ItemId> {
@@ -179,7 +189,7 @@ impl<'a> Parser<'a> {
         let name = self.ident_from_token(&name_tok);
         let generic_params = self.parse_generic_params()?;
         let lparen = self.expect(TokenKind::LParen, name.span)?;
-        let (fields, rparen_span) = self.parse_params(lparen.span)?;
+        let (fields, rparen_span) = self.parse_params(lparen.span, false)?;
         let item_span = struct_span.merge(rparen_span);
         let def = StructDef {
             name,
@@ -281,6 +291,36 @@ impl<'a> Parser<'a> {
         Ok(EnumVariant { name, payload })
     }
 
+    fn parse_extend_def(&mut self, extend_span: Span) -> PResult<ItemId> {
+        let target_tok = self.expect(TokenKind::Ident, extend_span)?;
+        let target = self.ident_from_token(&target_tok);
+        let generic_params = self.parse_generic_params()?;
+        let lbrace = self.expect(TokenKind::LBrace, target.span)?;
+        let mut methods = Vec::new();
+
+        while !self
+            .lexer
+            .peek()
+            .is_some_and(|token| matches!(token.kind, TokenKind::RBrace | TokenKind::Eof))
+        {
+            let fn_tok = self.expect(TokenKind::KwFn, lbrace.span)?;
+            methods.push(self.parse_function_def_inner(fn_tok.span, true)?);
+        }
+
+        let prev = methods
+            .last()
+            .map_or(lbrace.span, |method| method.body.span);
+        let rbrace = self.expect(TokenKind::RBrace, prev)?;
+        Ok(self.ctx.alloc_item(Item {
+            kind: ItemKind::Extend(ExtendDef {
+                target,
+                generic_params,
+                methods,
+            }),
+            span: extend_span.merge(rbrace.span),
+        }))
+    }
+
     pub(crate) fn parse_type(&mut self, prev_span: Span) -> PResult<TypeId> {
         let path = self.parse_path(prev_span)?;
         let path_span = match (path.0.first(), path.0.last()) {
@@ -352,14 +392,18 @@ impl<'a> Parser<'a> {
         Ok((args, gt.span))
     }
 
-    fn parse_params(&mut self, lparen_span: Span) -> PResult<(Vec<Param>, Span)> {
+    fn parse_params(
+        &mut self,
+        lparen_span: Span,
+        allow_self_param: bool,
+    ) -> PResult<(Vec<Param>, Span)> {
         let mut params = Vec::new();
         if let Some(rparen) = self.lexer.next_if(|token| token.kind == TokenKind::RParen) {
             return Ok((params, rparen.span));
         }
 
         loop {
-            params.push(self.parse_param()?);
+            params.push(self.parse_param(allow_self_param && params.is_empty())?);
             if self
                 .lexer
                 .next_if(|token| token.kind == TokenKind::Comma)
@@ -379,8 +423,25 @@ impl<'a> Parser<'a> {
         Ok((params, rparen.span))
     }
 
-    fn parse_param(&mut self) -> PResult<Param> {
+    fn parse_param(&mut self, allow_self_param: bool) -> PResult<Param> {
         let prev = self.prev_span();
+        if allow_self_param
+            && let Some(token) = self.lexer.next_if(|token| token.kind == TokenKind::KwSelf)
+        {
+            let name = self.ident_from_token(&token);
+            let ty = self.ctx.alloc_type(Type {
+                kind: TypeKind::Path {
+                    path: ModPath(vec![name]),
+                    generic_args: Vec::new(),
+                },
+                span: token.span,
+            });
+            return Ok(Param {
+                label: ParamLabel::Implicit,
+                name,
+                ty,
+            });
+        }
         let first = self.expect(TokenKind::Ident, prev)?;
         let first_ident = self.ident_from_token(&first);
 
@@ -405,7 +466,7 @@ impl<'a> Parser<'a> {
         Ok(Param { label, name, ty })
     }
 
-    fn parse_block(&mut self, prev_span: Span) -> PResult<Block> {
+    pub(crate) fn parse_block(&mut self, prev_span: Span) -> PResult<Block> {
         let lbrace = self.expect(TokenKind::LBrace, prev_span)?;
         let mut stmts = Vec::new();
         while !self
@@ -413,18 +474,199 @@ impl<'a> Parser<'a> {
             .peek()
             .is_some_and(|token| matches!(token.kind, TokenKind::RBrace | TokenKind::Eof))
         {
-            let expr = self.parse_expr()?;
-            let span = self.ctx.get_expr(expr).span;
-            stmts.push(Stmt {
-                kind: StmtKind::Expr(expr),
-                span,
-            });
+            stmts.push(self.parse_stmt()?);
         }
         let rbrace = self.expect(TokenKind::RBrace, lbrace.span)?;
         Ok(Block {
             stmts,
             span: lbrace.span.merge(rbrace.span),
         })
+    }
+
+    fn parse_stmt(&mut self) -> PResult<Stmt> {
+        match self.lexer.peek().map(|token| token.kind) {
+            Some(TokenKind::KwLet | TokenKind::KwVar) => self.parse_assignment_stmt(),
+            Some(TokenKind::KwIf) => self.parse_if_stmt(),
+            Some(TokenKind::KwFor) => self.parse_for_in_stmt(),
+            Some(TokenKind::Ident | TokenKind::KwSelf) if self.next_starts_assignment() => {
+                self.parse_assignment_stmt()
+            }
+            _ => {
+                let expr = self.parse_expr()?;
+                let span = self.ctx.get_expr(expr).span;
+                Ok(Stmt {
+                    kind: StmtKind::Expr(expr),
+                    span,
+                })
+            }
+        }
+    }
+
+    fn parse_assignment_stmt(&mut self) -> PResult<Stmt> {
+        let first_span = self.prev_span();
+        let binding = match self.lexer.peek().map(|token| token.kind) {
+            Some(TokenKind::KwLet) => {
+                self.lexer.next();
+                Some(BindingKind::Let)
+            }
+            Some(TokenKind::KwVar) => {
+                self.lexer.next();
+                Some(BindingKind::Var)
+            }
+            _ => None,
+        };
+        let target = self.parse_assign_target()?;
+        let target_span = match &target {
+            AssignTarget::Ident(ident) => ident.span,
+            AssignTarget::Field { base, fields } => fields
+                .last()
+                .map(|field| base.span.merge(field.span))
+                .unwrap_or(base.span),
+        };
+        let ty = if self
+            .lexer
+            .next_if(|token| token.kind == TokenKind::Colon)
+            .is_some()
+        {
+            Some(self.parse_type(target_span)?)
+        } else {
+            None
+        };
+        let prev = ty.map_or(target_span, |ty| self.ctx.get_type(ty).span);
+        self.expect(TokenKind::Assign, prev)?;
+        let value = self.parse_expr()?;
+        let value_span = self.ctx.get_expr(value).span;
+        Ok(Stmt {
+            kind: StmtKind::Assignment(AssignmentStmt {
+                binding,
+                target,
+                ty,
+                value,
+            }),
+            span: first_span.merge(value_span),
+        })
+    }
+
+    fn parse_assign_target(&mut self) -> PResult<AssignTarget> {
+        let prev = self.prev_span();
+        let first = self
+            .lexer
+            .next()
+            .ok_or_else(|| ParseError::unexpected_eof(Some(TokenKind::Ident), prev))?;
+        if !matches!(first.kind, TokenKind::Ident | TokenKind::KwSelf) {
+            return Err(ParseError::expected(
+                TokenKind::Ident,
+                first.kind,
+                first.span,
+            ));
+        }
+        let base = self.ident_from_token(&first);
+        let mut fields = Vec::new();
+        while self
+            .lexer
+            .next_if(|token| token.kind == TokenKind::Dot)
+            .is_some()
+        {
+            let field = self.expect(TokenKind::Ident, base.span)?;
+            fields.push(self.ident_from_token(&field));
+        }
+        if fields.is_empty() {
+            Ok(AssignTarget::Ident(base))
+        } else {
+            Ok(AssignTarget::Field { base, fields })
+        }
+    }
+
+    fn parse_if_stmt(&mut self) -> PResult<Stmt> {
+        let prev = self.prev_span();
+        let if_tok = self.expect(TokenKind::KwIf, prev)?;
+        let if_stmt = self.parse_if_stmt_after_if()?;
+        let span = if_tok.span.merge(Self::if_stmt_end_span(&if_stmt));
+        Ok(Stmt {
+            kind: StmtKind::If(if_stmt),
+            span,
+        })
+    }
+
+    fn parse_if_stmt_after_if(&mut self) -> PResult<IfStmt> {
+        let condition = self.parse_expr()?;
+        let condition_span = self.ctx.get_expr(condition).span;
+        let then_block = self.parse_block(condition_span)?;
+        let else_branch = if self
+            .lexer
+            .next_if(|token| token.kind == TokenKind::KwElse)
+            .is_some()
+        {
+            if self
+                .lexer
+                .next_if(|token| token.kind == TokenKind::KwIf)
+                .is_some()
+            {
+                Some(ElseBranch::If(Box::new(self.parse_if_stmt_after_if()?)))
+            } else {
+                Some(ElseBranch::Block(self.parse_block(then_block.span)?))
+            }
+        } else {
+            None
+        };
+        Ok(IfStmt {
+            condition,
+            then_block,
+            else_branch,
+        })
+    }
+
+    fn parse_for_in_stmt(&mut self) -> PResult<Stmt> {
+        let prev = self.prev_span();
+        let for_tok = self.expect(TokenKind::KwFor, prev)?;
+        let binding_tok = self.expect(TokenKind::Ident, for_tok.span)?;
+        let binding = self.ident_from_token(&binding_tok);
+        self.expect(TokenKind::KwIn, binding.span)?;
+        let iter = self.parse_expr()?;
+        let iter_span = self.ctx.get_expr(iter).span;
+        let body = self.parse_block(iter_span)?;
+        let body_span = body.span;
+        Ok(Stmt {
+            kind: StmtKind::ForIn(ForInStmt {
+                binding,
+                iter,
+                body,
+            }),
+            span: for_tok.span.merge(body_span),
+        })
+    }
+
+    fn next_starts_assignment(&self) -> bool {
+        let mut lookahead = self.lexer.clone();
+        if !lookahead
+            .next()
+            .is_some_and(|token| matches!(token.kind, TokenKind::Ident | TokenKind::KwSelf))
+        {
+            return false;
+        }
+        loop {
+            match lookahead.peek().map(|token| token.kind) {
+                Some(TokenKind::Assign | TokenKind::Colon) => return true,
+                Some(TokenKind::Dot) => {
+                    lookahead.next();
+                    if !lookahead
+                        .next()
+                        .is_some_and(|token| token.kind == TokenKind::Ident)
+                    {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    fn if_stmt_end_span(if_stmt: &IfStmt) -> Span {
+        match &if_stmt.else_branch {
+            Some(ElseBranch::If(else_if)) => Self::if_stmt_end_span(else_if),
+            Some(ElseBranch::Block(block)) => block.span,
+            None => if_stmt.then_block.span,
+        }
     }
 
     pub(crate) fn ident_from_token(&mut self, token: &Token) -> Ident {
@@ -593,6 +835,21 @@ mod tests {
                     );
                     self.write_expr("  base", field.base, ctx);
                 }
+                ExprKind::Array(array) => {
+                    let _ = writeln!(&mut self.out, "{label}: array");
+                    for element in &array.elements {
+                        self.write_expr("  elem", *element, ctx);
+                    }
+                }
+                ExprKind::If(if_expr) => {
+                    let _ = writeln!(&mut self.out, "{label}: if");
+                    self.write_expr("  cond", if_expr.condition, ctx);
+                    for stmt in &if_expr.then_block.stmts {
+                        if let ast::item::StmtKind::Expr(expr) = stmt.kind {
+                            self.write_expr("  then", expr, ctx);
+                        }
+                    }
+                }
             }
         }
     }
@@ -647,8 +904,20 @@ mod tests {
             }
             self.out.push('\n');
             for stmt in &def.body.stmts {
-                match stmt.kind {
-                    ast::item::StmtKind::Expr(expr) => self.write_expr("  expr", expr, ctx),
+                match &stmt.kind {
+                    ast::item::StmtKind::Expr(expr) => self.write_expr("  expr", *expr, ctx),
+                    ast::item::StmtKind::Assignment(assign) => {
+                        let _ = writeln!(&mut self.out, "  assign");
+                        self.write_expr("    value", assign.value, ctx);
+                    }
+                    ast::item::StmtKind::If(if_stmt) => {
+                        let _ = writeln!(&mut self.out, "  if");
+                        self.write_expr("    cond", if_stmt.condition, ctx);
+                    }
+                    ast::item::StmtKind::ForIn(for_in) => {
+                        let _ =
+                            writeln!(&mut self.out, "  for {}", ctx.get_str(for_in.binding.name));
+                    }
                 }
             }
         }
@@ -715,6 +984,24 @@ mod tests {
                 }
             }
             self.out.push_str("}\n");
+        }
+
+        fn visit_extend(&mut self, _item_id: ItemId, def: &ast::item::ExtendDef, ctx: &AstCtx) {
+            let _ = write!(&mut self.out, "extend {}", ctx.get_str(def.target.name));
+            if !def.generic_params.is_empty() {
+                self.out.push('<');
+                for (idx, generic) in def.generic_params.iter().enumerate() {
+                    if idx > 0 {
+                        self.out.push_str(", ");
+                    }
+                    self.out.push_str(ctx.get_str(generic.name));
+                }
+                self.out.push('>');
+            }
+            self.out.push('\n');
+            for method in &def.methods {
+                let _ = writeln!(&mut self.out, "  method {}", ctx.get_str(method.name.name));
+            }
         }
     }
 
@@ -1276,5 +1563,64 @@ mod tests {
                 found: TokenKind::LBrace
             }
         ));
+    }
+
+    #[test]
+    fn parses_extend_with_self_method() {
+        let parsed = parse_ok("extend Point { fn f(self) {} }");
+
+        assert_eq!(parsed.compact_ast(), "extend Point\n  method f\n");
+    }
+
+    #[test]
+    fn parses_assignment_statements() {
+        let parsed = parse_ok("fn f() { let a = 1 var b: T = x a = 2 self.x = 3 }");
+
+        assert_eq!(
+            parsed.compact_ast(),
+            "fn f()\n  assign\n    value: int\n  assign\n    value: path x\n  assign\n    value: int\n  assign\n    value: int\n"
+        );
+    }
+
+    #[test]
+    fn parses_if_statement_chain() {
+        let parsed = parse_ok("fn f() { if i > 0 { 1 } else if i < 0 { 2 } else { 3 } }");
+
+        assert_eq!(
+            parsed.compact_ast(),
+            "fn f()\n  if\n    cond: binary Gt\n  lhs: path i\n  rhs: int\n"
+        );
+    }
+
+    #[test]
+    fn parses_if_expression() {
+        let parsed = parse_ok("fn f() { let x = if cond { 1 } else { 2 } }");
+
+        assert_eq!(
+            parsed.compact_ast(),
+            "fn f()\n  assign\n    value: if\n  cond: path cond\n  then: int\n"
+        );
+    }
+
+    #[test]
+    fn parses_for_in_statement() {
+        let parsed = parse_ok("fn f() { for x in xs { x } }");
+
+        assert_eq!(parsed.compact_ast(), "fn f()\n  for x\n");
+    }
+
+    #[test]
+    fn parses_array_literals() {
+        let parsed = parse_ok("fn f() { [] [1, 2, 3,] }");
+
+        assert_eq!(
+            parsed.compact_ast(),
+            "fn f()\n  expr: array\n  expr: array\n  elem: int\n  elem: int\n  elem: int\n"
+        );
+    }
+
+    #[test]
+    fn parses_kitchen_sink_asset() {
+        parse_ok(include_str!("../../../assets/kitchen_sink.pr"));
     }
 }

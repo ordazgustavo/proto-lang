@@ -1,6 +1,7 @@
 use crate::{
     arena::{Arena, Id},
     common::{Ident, ModPath},
+    item::Block,
     span::Span,
     ty::TypeId,
 };
@@ -20,6 +21,8 @@ pub enum ExprKind {
     Binary(BinaryExpr),
     Call(CallExpr),
     Field(FieldExpr),
+    Array(ArrayExpr),
+    If(IfExpr),
 }
 
 #[derive(Debug)]
@@ -73,6 +76,24 @@ pub struct Arg {
 pub struct FieldExpr {
     pub base: ExprId,
     pub field: Ident,
+}
+
+#[derive(Debug)]
+pub struct ArrayExpr {
+    pub elements: Vec<ExprId>,
+}
+
+#[derive(Debug)]
+pub struct IfExpr {
+    pub condition: ExprId,
+    pub then_block: Block,
+    pub else_branch: IfElseBranch,
+}
+
+#[derive(Debug)]
+pub enum IfElseBranch {
+    If(ExprId),
+    Block(Block),
 }
 
 #[derive(Debug)]
